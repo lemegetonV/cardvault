@@ -1,0 +1,88 @@
+name: Start CardVault stack
+description: >
+  Build every image with the GitHub Actions layer cache, start the stack with the CI
+  override, wait until every container is healthy, seed it, and print each /ready.
+  Reused by app-ci.yml and by the test workflows.
+
+inputs:
+  bug_flag:
+    description: Optional seeded-bug flag to turn on (exactly one), e.g. BUG_PAN_IN_LOGS
+    required: false
+    default: ""
+  test_mode:
+    description: Start services with TEST_MODE (test controls and seeding)
+    required: false
+    default: "true"
+
+outputs:
+  startup_seconds:
+    description: Seconds from "compose up" to every container healthy (excludes builds)
+    value: ${{ steps.up.outputs.startup_seconds }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare .env and flags
+      shell: bash
+      run: |
+        cp .env.example .env
+        echo "TEST_MODE=${{ inputs.test_mode }}" >> "$GITHUB_ENV"
+        if [[ -n "${{ inputs.bug_flag }}" ]]; then
+          ./scripts/check-bug.sh "${{ inputs.bug_flag }}"
+          echo "${{ inputs.bug_flag }}=true" >> "$GITHUB_ENV"
+          echo "Seeded bug on: ${{ inputs.bug_flag }}"
+        fi
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: List image targets
+      id: targets
+      shell: bash
+      run: |
+        # One GHA cache scope per image, so images do not evict each other's cache.
+        targets=$(docker compose -f docker-compose.yml -f docker-compose.ci.yml config --format json \
+          | python3 -c 'import json,sys; print(" ".join(k for k,v in json.load(sys.stdin)["services"].items() if "build" in v))')
+        {
+          echo "set<<EOF"
+          for t in $targets; do
+            echo "$t.cache-from=type=gha,scope=$t"
+            echo "$t.cache-to=type=gha,mode=max,scope=$t"
+          done
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+        echo "targets: $targets"
+
+    - name: Build images (GHA layer cache)
+      uses: docker/bake-action@v6
+      with:
+        source: .
+        files: |
+          docker-compose.yml
+          docker-compose.ci.yml
+        load: true
+        set: ${{ steps.targets.outputs.set }}
+
+    - name: Start stack and wait until healthy
+      id: up
+      shell: bash
+      run: |
+        start=$(date +%s)
+        docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build --wait --wait-timeout 300
+        elapsed=$(( $(date +%s) - start ))
+        echo "startup_seconds=$elapsed" >> "$GITHUB_OUTPUT"
+        echo "Stack healthy in ${elapsed}s (runner: $(nproc) vCPU, $(free -g | awk '/Mem:/{print $2}') GB RAM)"
+        echo "### Stack started healthy in ${elapsed}s on $(nproc) vCPU" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Seed
+      shell: bash
+      run: make seed
+
+    - name: Print readiness
+      shell: bash
+      run: |
+        source scripts/lib.sh
+        for entry in "${SERVICES[@]}"; do
+          name="${entry%%=*}" url="${entry#*=}"
+          printf '%-12s %s\n' "$name" "$(curl -s "$url/ready")"
+        done

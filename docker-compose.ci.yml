@@ -1,0 +1,35 @@
+# CI override: `docker compose -f docker-compose.yml -f docker-compose.ci.yml ...`
+# Fits a 2 vCPU / 8 GB GitHub runner: memory limits on every container, Redpanda in dev
+# mode with 1 GB, no Redpanda Console, INFO logs. (The GitHub Actions layer cache is set by
+# the start-stack action, so `make ci-up` also works on a laptop.)
+# Ports are already bound to 127.0.0.1 in docker-compose.yml, so nothing changes there.
+
+x-ci-python: &ci-python
+  mem_limit: 256m
+
+services:
+  postgres:
+    mem_limit: 512m
+
+  redpanda:
+    mem_limit: 1536m
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --overprovisioned
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://127.0.0.1:19092
+      - --rpc-addr=redpanda:33145
+      - --advertise-rpc-addr=redpanda:33145
+
+  console:
+    # Not started in CI: a profile that is never enabled.
+    profiles: ["never"]
+
+  auth:
+    <<: *ci-python
+    environment:
+      LOG_LEVEL: INFO
