@@ -243,7 +243,7 @@ to `127.0.0.1` in the base file already, so the override does not need to change
 | Phase | Where | Startup to all healthy | Memory after smoke |
 |---|---|---|---|
 | 1 | Cloud dev container pinned to 2 CPUs (CI override) | 11 s | ~380 MiB (redpanda 237, auth 103, postgres 42) |
-| 1 | GitHub-hosted runner | see the `stack-smoke` job summary | see the job summary |
+| 1 | GitHub-hosted runner, 4 vCPU (app-ci run 45179541033) | 19 s | ~237 MiB (redpanda 116, auth 87, postgres 35) |
 
 Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 
