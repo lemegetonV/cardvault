@@ -218,7 +218,10 @@ commit); change-data-capture would remove the poll but adds infrastructure.
 validation fails or unknown envelope `version`) are retried 3 times, then sent to the DLQ
 with the source topic, partition, offset and error as headers. Other errors retry with
 backoff and block the partition, which preserves per-key order at the cost of
-head-of-line blocking. The consumer loop logs and survives any error, because a consumer
+head-of-line blocking. `/test/reset` holds relays and consumers before truncating: each
+takes a lock around one message (or one drain) and checks the hold flag inside it, so once
+the hold returns nothing is running (an earlier event flag let a message slip through and
+deadlock against the truncate). The consumer loop logs and survives any error, because a consumer
 task that dies quietly looks exactly like an idle one.
 
 The relay, a forced publish failure (`fail_next: 2`), per-key ordering and DLQ routing were

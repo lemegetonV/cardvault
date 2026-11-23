@@ -172,8 +172,9 @@ class OutboxRelay:
         self.batch_size = batch_size
         self._wake = asyncio.Event()
         self._held = asyncio.Event()
-        self._idle = asyncio.Event()
-        self._idle.set()
+        # Held while draining; hold() takes it after setting _held, so when hold() returns
+        # no drain is running and none will start until release().
+        self._busy = asyncio.Lock()
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -198,7 +199,8 @@ class OutboxRelay:
 
     async def hold(self) -> None:
         self._held.set()
-        await self._idle.wait()
+        async with self._busy:
+            pass
 
     def release(self) -> None:
         self._held.clear()
@@ -215,11 +217,8 @@ class OutboxRelay:
                 if self._held.is_set() or faults.is_active("relay_pause"):
                     await asyncio.sleep(self.poll_interval)
                     continue
-                self._idle.clear()
-                try:
-                    drained = await self.drain_once()
-                finally:
-                    self._idle.set()
+                async with self._busy:
+                    drained = 0 if self._held.is_set() else await self.drain_once()
                 if drained == 0:
                     with contextlib.suppress(TimeoutError):
                         await asyncio.wait_for(self._wake.wait(), timeout=self.poll_interval)

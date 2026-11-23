@@ -123,8 +123,9 @@ class Consumer:
         )
         self._task: asyncio.Task | None = None
         self._paused = asyncio.Event()  # set while /test/reset holds the consumer
-        self._idle = asyncio.Event()
-        self._idle.set()
+        # Held while one message is processed. hold() takes it after setting _paused, so
+        # once hold() returns no handler is running and none will start.
+        self._busy = asyncio.Lock()
 
     async def start(self) -> None:
         await self._consumer.start()
@@ -139,7 +140,8 @@ class Consumer:
     async def hold(self) -> None:
         """Pause and wait for the in-flight message to finish (used by /test/reset)."""
         self._paused.set()
-        await self._idle.wait()
+        async with self._busy:
+            pass
 
     async def seek_to_end_and_commit(self) -> None:
         parts = self._consumer.assignment()
@@ -182,11 +184,12 @@ class Consumer:
         batch = await self._consumer.getmany(timeout_ms=500, max_records=50)
         for tp, messages in batch.items():
             for msg in messages:
-                self._idle.clear()
-                try:
+                async with self._busy:
+                    if self._paused.is_set():
+                        # Put the unprocessed rest back; it is fetched again on release.
+                        self._consumer.seek(tp, msg.offset)
+                        break
                     await self._process(tp, msg)
-                finally:
-                    self._idle.set()
 
     async def _process(self, tp: TopicPartition, msg) -> None:
         malformed_attempts = 0
