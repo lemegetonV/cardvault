@@ -165,18 +165,28 @@ class Consumer:
         return total
 
     async def _run(self) -> None:
+        # The loop must never die quietly: a dead consumer looks exactly like an idle one.
         while True:
-            if self._paused.is_set() or faults.is_active("consumer_pause"):
-                await asyncio.sleep(0.2)
-                continue
-            batch = await self._consumer.getmany(timeout_ms=500, max_records=50)
-            for tp, messages in batch.items():
-                for msg in messages:
-                    self._idle.clear()
-                    try:
-                        await self._process(tp, msg)
-                    finally:
-                        self._idle.set()
+            try:
+                await self._poll_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("consumer loop error", extra={"group": self.group_id})
+                await asyncio.sleep(1)
+
+    async def _poll_once(self) -> None:
+        if self._paused.is_set() or faults.is_active("consumer_pause"):
+            await asyncio.sleep(0.2)
+            return
+        batch = await self._consumer.getmany(timeout_ms=500, max_records=50)
+        for tp, messages in batch.items():
+            for msg in messages:
+                self._idle.clear()
+                try:
+                    await self._process(tp, msg)
+                finally:
+                    self._idle.set()
 
     async def _process(self, tp: TopicPartition, msg) -> None:
         malformed_attempts = 0

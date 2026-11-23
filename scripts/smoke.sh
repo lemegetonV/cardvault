@@ -2,8 +2,12 @@
 # CardVault smoke test: the happy path end to end, for whatever exists so far.
 # Phase 1 covers the platform (probes, error shape, correlation IDs, shared clock) and
 # auth-service (login, JWKS, /me, refresh rotation and reuse, logout, lockout).
-# Later phases extend it towards spec section 11. Run against a seeded stack.
+# Phase 2 adds card-service and network-mock: cards, lifecycle, authorization, holds,
+# clearing, idempotency. Later phases extend it towards spec section 11.
+# It starts by resetting and reseeding the stack, so it can be run again and again.
 source "$(dirname "$0")/lib.sh"
+
+"$(dirname "$0")/reset.sh" >/dev/null
 
 PASSED=0
 pass() { PASSED=$((PASSED + 1)); printf '  ok   %s\n' "$1"; }
@@ -115,5 +119,7 @@ req POST "$AUTH/v1/auth/login" "$(login_body alice "$PASSWORD")"
 expect_status 503 "the next login gets the injected 503"
 req POST "$AUTH/v1/auth/login" "$(login_body alice "$PASSWORD")"
 expect_status 200 "the fault expired after one use"
+
+source "$(dirname "$0")/smoke-cards.sh"
 
 printf '\nSmoke passed: %d checks.\n' "$PASSED"

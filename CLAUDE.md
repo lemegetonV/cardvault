@@ -12,7 +12,7 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - Fictional and generic only: no real bank, wallet, network or operator names or flows.
 - Default behaviour is always correct; bugs exist only behind `BUG_*` flags.
 - Ask before adding any dependency not in the spec. Approved extras: uvicorn, asyncpg,
-  PyJWT, cryptography, httpx.
+  PyJWT, cryptography, httpx. (Not approved: python-snappy, so Kafka messages must be uncompressed.)
 - Business time comes only from `shared.clock.now()`; retries and delays use real time.
 - Every event and every operator call goes through the outbox.
 - Money is integer cents. Never log PANs or tokens (the log formatter masks them anyway).
@@ -22,7 +22,7 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 
 ## Phase status
 - [x] 1. Monorepo, compose + CI override, `shared`, auth-service, Makefile, smoke, start-stack action, app-ci
-- [ ] 2. card-service + network-mock
+- [x] 2. card-service + network-mock
 - [ ] 3. profile-service + enrollment-service + wallet-operator-mock
 - [ ] 4. wallet-txn-service + every Kafka flow + DLQs + reconciliation
 - [ ] 5. web app + the 10 Playwright coverage features + operator embed/help pages
@@ -37,6 +37,10 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - `app/Dockerfile`: one image recipe, `ARG SERVICE` selects `services.<name>` or `mocks.<name>`.
 - `app/infra/postgres/01-databases.sh`: databases, roles, the shared clock table.
 - `scripts/lib.sh`: the `SERVICES` list (add each new service here), `req`/`json` helpers.
+- `scripts/smoke.sh` resets and reseeds first, then runs; per-phase parts are sourced
+  (`smoke-cards.sh`).
+- `app/shared/seed_data.py`: seed cards, enrolments and tokens shared by all services/mocks.
+- `app/mocks/<name>/main.py`: mocks use `create_app` too (`uses_db=False`, state in memory).
 
 ## Adding a service (checklist)
 1. `app/services/<name>/` with `main.py`, `models.py`, `migrations/` (copy auth's env.py).

@@ -10,7 +10,8 @@ It is an **application under test**: it exists so that API and UI test framework
 built against realistic behaviour (auth, idempotency, events, signed callbacks, failures,
 reconciliation) with test-only controls, deterministic seed data and observable state.
 
-> Build status: phase 1 of 6 (platform, auth-service, CI). See `SPEC.md` section 13.
+> Build status: phase 2 of 6 (platform, auth-service, card-service, network-mock, CI).
+> See `SPEC.md` section 13.
 
 ## Quick start
 
@@ -25,6 +26,8 @@ make smoke   # end-to-end smoke test
 | URL | What |
 |---|---|
 | http://localhost:8001/docs | auth-service OpenAPI |
+| http://localhost:8002/docs | card-service OpenAPI |
+| http://localhost:8102/docs | network-mock OpenAPI |
 | http://localhost:8080 | Redpanda Console |
 | `127.0.0.1:19092` | Kafka (Redpanda) from the host |
 | `127.0.0.1:5432` | Postgres (read-only roles in `.env.example`) |
@@ -35,6 +38,15 @@ Seed logins: `alice`, `bob`, `charlie`, `dana`, password in `.env.example`
 ```bash
 curl -s localhost:8001/v1/auth/login -H 'content-type: application/json' \
   -d '{"username":"alice","password":"CardVault-Demo-1"}'
+```
+
+Simulate a wallet purchase on alice's enrolled credit card, then settle it:
+
+```bash
+curl -s localhost:8102/v1/test/purchases -H 'X-Test-Key: cv-test-key-local' \
+  -H 'content-type: application/json' \
+  -d '{"token_ref":"tok_a11ce0c4ed170000000001","amount":1250,"merchant_name":"Coffee"}'
+curl -s -X POST localhost:8102/v1/test/purchases/<trace_id>/settle -H 'X-Test-Key: cv-test-key-local'
 ```
 
 ## Make targets

@@ -5,7 +5,7 @@ application under test: every decision below favours production-like behaviour a
 testability over features. This file records each decision and its tradeoff. It grows with
 each build phase; sections for later phases are marked as such.
 
-Status: **phase 1** (platform, shared package, auth-service, CI).
+Status: **phase 2** (platform, auth-service, card-service, network-mock, CI).
 
 ## 1. Services and responsibilities
 
@@ -80,6 +80,10 @@ cross-service data flows through APIs and events.
 | `faults.py` | Runtime fault injection |
 | `bugs.py` | Seeded-bug flags (all off by default) |
 | `testsupport.py` | `/test/reset`, `/test/seed`, `/test/faults`, `/test/clock`, `/test/quiet` |
+| `idempotency.py` | `Idempotency-Key` storage and replay (section 9) |
+| `pagination.py` | Keyset cursor pagination (section 9) |
+| `http_client.py` | httpx client that always sends the correlation ID (and a service key) |
+| `seed_ids.py`, `seed_data.py` | Fixed customer, card, enrolment and token IDs shared by every service and mock |
 
 **Correlation IDs.** The middleware is plain ASGI rather than Starlette's
 `BaseHTTPMiddleware`, so the context variable it sets is the one the handler sees and
@@ -137,7 +141,8 @@ costs a less useful log line, a false negative leaks card data.
 
 - **Service keys:** one `X-Service-Key` per caller (network-mock, wallet-operator-mock,
   tests), compared in constant time. Internal endpoints reject customer JWTs and customer
-  endpoints reject service keys, both with 401 (phase 2 onwards).
+  endpoints reject service keys, both with 401. card-service's internal API accepts the
+  network-mock and tests keys only.
 - **Test controls** are mounted only when `TEST_MODE=true` (otherwise the routes do not exist,
   so they return 404) and need `X-Test-Key`.
 
@@ -149,7 +154,7 @@ forged request learns nothing about the window. A timestamp more than 300 s away
 shared clock (past or future) is rejected; exactly 300 s is accepted. Replay inside the
 window is stopped by `event_id` deduplication, and stale `operator_version`s are ignored.
 
-### 404 versus 403 for another customer's resource (phase 2 onwards)
+### 404 versus 403 for another customer's resource
 
 A customer asking for another customer's resource gets **404**, the same as for a resource
 that does not exist. A 403 would confirm that the ID exists and let an attacker enumerate
@@ -204,12 +209,125 @@ commit); change-data-capture would remove the poll but adds infrastructure.
 validation fails or unknown envelope `version`) are retried 3 times, then sent to the DLQ
 with the source topic, partition, offset and error as headers. Other errors retry with
 backoff and block the partition, which preserves per-key order at the cost of
-head-of-line blocking.
+head-of-line blocking. The consumer loop logs and survives any error, because a consumer
+task that dies quietly looks exactly like an idle one.
 
 The relay, a forced publish failure (`fail_next: 2`), per-key ordering and DLQ routing were
 exercised against the running Redpanda during phase 1.
 
-## 8. Fault injection and seeded bugs
+## 8. Card-service (phase 2)
+
+### Card data
+
+- The full card number (PAN) exists only in card-service, encrypted with **AES-256-GCM**
+  (`CARD_PAN_KEY`, 32 bytes). The `card_id` is bound as associated data, so a ciphertext
+  copied to another row does not decrypt. APIs return `last4` and `expiry`, never the PAN.
+  *Tradeoff:* the key sits in an env var; production would use a KMS with envelope
+  encryption and key rotation (the `v1:` prefix leaves room for a new scheme).
+- Seed and test PANs use the fictional prefix `990000` and a valid Luhn digit.
+- `limit` and `available` are integer cents. `available` may go negative only on CREDIT
+  (an over-settle).
+
+### Card lifecycle (spec 16.1 rules 1 to 3)
+
+| Action | From | To | Events |
+|---|---|---|---|
+| create (seed, `/test/cards`) | | ACTIVE (or as given) | `CARD_ACTIVATED` |
+| report lost | ACTIVE | LOST | `CARD_LOST` |
+| report lost | LOST | LOST (200, no change) | none |
+| reissue | ACTIVE or LOST | ACTIVE, new PAN, last4, expiry; same `card_id` | `CARD_ACTIVATED`, `CARD_REISSUED` |
+| close | ACTIVE or LOST | CLOSED | `CARD_CLOSED` |
+| close | CLOSED | CLOSED (200, no change) | none |
+| anything else | | | 409 `INVALID_STATE_TRANSITION` |
+
+Repeating a destructive action returns 200 with the current state, so retries (including a
+future agent's) are safe even without an `Idempotency-Key`.
+
+### Authorization
+
+`POST /internal/v1/authorizations` (network-mock or tests key). Checked in this order, the
+first failing check wins:
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Card LOST | `DECLINED / CARD_LOST` |
+| 2 | Card CLOSED | `DECLINED / CARD_CLOSED` |
+| 3 | Expired on the shared clock (00:00 UTC on the 1st of the month after expiry) | `DECLINED / CARD_EXPIRED` |
+| 4 | WALLET only: `token_ref` not mapped to this `card_id` | `DECLINED / TOKEN_MISMATCH` |
+| 5 | WALLET only: token not ENROLLED in the local copy | `DECLINED / TOKEN_INACTIVE` |
+| 6 | Amount above available | `DECLINED / INSUFFICIENT_FUNDS` |
+| | Otherwise | `APPROVED`: hold created, available reduced, `last_used_at` set |
+
+Malformed requests (amount <= 0, currency not USD, missing fields, WALLET without a token)
+return 422; an unknown card returns 404. Every decision publishes `auth.decided`; an
+approval also publishes `card.lifecycle CARD_USED`. CARD purchases (`token_requestor=CARD`,
+no token) skip checks 4 and 5.
+
+**Idempotent by `trace_id`.** The decision is stored with the trace; a duplicate returns the
+stored decision and creates no second hold. The card row is locked (`SELECT ... FOR
+UPDATE`) before deciding, and the stored decision is checked again after the lock, so two
+concurrent requests with one `trace_id` cannot both take a hold. The same `trace_id` with a
+different body returns the original decision (the network owns trace IDs).
+
+**Eventually consistent token status.** card-service does not call enrollment-service while
+authorizing. It keeps a local `wallet_tokens` table fed by `enrollment.changed`. Each row
+carries the enrolment `version` and only moves forward, so redelivered or out-of-order events
+are harmless; when an enrolment gets a new token, its other tokens become REMOVED.
+*Tradeoff:* authorization stays fast and works when enrollment-service is down, but for a
+short window after a suspend or remove a token can still be approved. A real issuer accepts
+this window for availability; tests can measure it with `/test/quiet`.
+
+### Hold maths (spec 16.4 rule 25)
+
+| Record | Preconditions | Effect on hold | Effect on available |
+|---|---|---|---|
+| SETTLE `x` | approved, not settled, hold not fully reversed; `x` above the hold only for CREDIT (else 422) | status SETTLED | `+ hold_remaining - x` |
+| REVERSE `x` | not settled (else 409, refund instead); `x` <= hold remaining (else 422) | amount `- x`; RELEASED at 0, otherwise stays ACTIVE | `+ x` |
+| REFUND `x` | settled (else 409); `x` <= cleared - refunded (else 422) | none | `+ x`, capped at `limit` for DEBIT and PREPAID |
+
+Other rules: one SETTLE per trace (409 `ALREADY_SETTLED`); SETTLE after a partial reverse
+settles against what is still held; clearing for an unknown trace is 404 and for a declined
+one 409. Clearing is idempotent by `clearing_id`; the same ID with a different body is 422
+`CLEARING_ID_REUSED`. Every record publishes `txn.cleared`. Holds never expire (known
+limitation).
+
+Locks are always taken in the order card row, then authorization row, then hold, in both
+authorization and clearing, so concurrent traffic on one card serialises without deadlocks.
+
+## 9. Idempotency keys and pagination
+
+**`Idempotency-Key`** (`shared/idempotency.py`, spec 16.5 rule 32) is optional on every
+state-changing POST. Its scope is the caller (customer ID or service name) plus the route
+template. The stored fingerprint is the method, the concrete path and the body, so reusing a
+key on another card is 422 `IDEMPOTENCY_KEY_REUSED`. A key whose first request is running is
+409 `IDEMPOTENCY_IN_PROGRESS`. A finished key replays the exact stored bytes and status with
+`Idempotent-Replayed: true`; 4xx answers are stored too, 5xx are not (so the client can
+retry). Keys last 24 hours on the shared clock.
+*Tradeoff:* the key row and the business change commit in separate transactions. A crash in
+between leaves the key IN_PROGRESS; after 60 s it is treated as abandoned and the next
+request runs again. That is safe here because the guarded actions are themselves idempotent
+by state (repeating report-lost is a no-op).
+
+**Pagination** (`shared/pagination.py`): newest first, ties broken by id, default 20, maximum
+100, opaque base64 cursor of the last item's `(created_at, id)`, keyset query (no OFFSET, so
+pages stay stable while rows are added). A bad cursor is 400 `INVALID_CURSOR`.
+
+## 10. network-mock (phase 2)
+
+A controllable card network. `POST /v1/tokens` (wallet-operator-mock key) maps a new
+`token_ref` to a `card_id`. Tests drive `POST /v1/test/purchases` (wallet token),
+`/v1/test/card-purchases` (plain card) and `/v1/test/purchases/{trace_id}/settle|reverse|refund`,
+all with `X-Test-Key`. Each purchase gets a new `trace_id`; each clearing record a new
+`clearing_id`. Responses from card-service are passed through unchanged.
+
+Controls (`/test/behaviour`, same `fail_next`/`rate`+`seed` semantics as faults):
+`duplicate_authorization` (resend the same trace), `timeout_retry` (give up after 1 ms, then
+retry the same trace) and `clearing_before_auth_event` (settle in the same call).
+
+State lives in memory; `/test/seed` restores the seed tokens.
+*Tradeoff:* no database to run for a mock, at the cost of losing ad-hoc tokens on restart.
+
+## 11. Fault injection and seeded bugs
 
 `POST /test/faults` replaces the active set: `latency`, `error` (5xx), `timeout`,
 `kafka_publish_failure`, `consumer_pause`, `relay_pause`. Each fault can be scoped (method
@@ -221,7 +339,7 @@ start-stack action's `bug_flag` input) turns exactly one on. The flag list lives
 `shared/bugs.py` and `scripts/bugs.txt`; CI checks they agree. `GET /test/bugs` shows which
 flags a service sees. Bug behaviour is implemented in phase 6.
 
-## 9. Continuous integration and resource budget
+## 12. Continuous integration and resource budget
 
 Nothing is hosted. `app-ci.yml` runs on every push and pull request:
 
@@ -244,21 +362,27 @@ to `127.0.0.1` in the base file already, so the override does not need to change
 |---|---|---|---|
 | 1 | Cloud dev container pinned to 2 CPUs (CI override) | 11 s | ~380 MiB (redpanda 237, auth 103, postgres 42) |
 | 1 | GitHub-hosted runner, 4 vCPU (app-ci run 45179541033) | 19 s | ~237 MiB (redpanda 116, auth 87, postgres 35) |
+| 2 | Cloud dev container pinned to 2 CPUs (CI override) | 23 s | ~532 MiB (redpanda 241, auth 87, network-mock 76, card 74, postgres 55) |
 
 Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 
-## 10. Agent-ready rules (spec 15.1)
+## 13. Agent-ready rules (spec 15.1)
 
 - Customer actions an agent will need are customer APIs that accept the customer's JWT.
-- Destructive actions will be idempotent with clear error codes (phase 2 and 3).
+- Destructive card actions (report lost, close) are idempotent by state and accept
+  `Idempotency-Key`; wallet actions follow in phase 3.
 - Every OpenAPI operation has a `summary` and `description`, and parameters have descriptions.
 - Correlation IDs flow through every hop.
 - Port 8006 and `evals/` are reserved.
 
-## 11. Known limitations
+## 14. Known limitations
 
 - An access token stays valid until it expires (up to 15 minutes) after logout.
 - Per-username lockout can be abused to lock a known account.
 - Migrations run at container start; safe only with one replica per service.
 - One Postgres instance hosts every database.
-- No PAN ever leaves the bank in this simulation (phase 2 adds encryption at rest).
+- No PAN ever leaves the bank in this simulation; PANs are encrypted at rest in card-service.
+- Holds never expire.
+- Consumers cannot read compressed Kafka batches (snappy, lz4, zstd need extra libraries).
+  Our producers do not compress; a tool such as `rpk topic produce` needs `-z none`.
+- network-mock keeps its state in memory.

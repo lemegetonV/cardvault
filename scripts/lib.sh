@@ -15,6 +15,8 @@ done < "$_env_file"
 # Services that exist so far, as name=base URL. Each phase adds its services here.
 SERVICES=(
   "auth=http://localhost:8001"
+  "card=http://localhost:8002"
+  "network-mock=http://localhost:8102"
 )
 
 service_url() {

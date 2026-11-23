@@ -33,3 +33,13 @@ services:
     <<: *ci-python
     environment:
       LOG_LEVEL: INFO
+
+  card:
+    <<: *ci-python
+    environment:
+      LOG_LEVEL: INFO
+
+  network-mock:
+    <<: *ci-python
+    environment:
+      LOG_LEVEL: INFO

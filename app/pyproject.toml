@@ -31,6 +31,8 @@ select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "S", "SIM", "RUF"]
 ignore = [
     "S101",   # assert is fine in invariants
     "S104",   # services bind 0.0.0.0 inside their container on purpose
+    "S105",   # "token" field names are not passwords
+    "S106",
     "S311",   # seeded RNGs are for deterministic test data, not crypto
     "RUF012", # SQLAlchemy/Pydantic class attributes
     "B008",   # FastAPI Depends() in defaults is the idiom
