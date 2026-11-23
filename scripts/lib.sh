@@ -13,10 +13,15 @@ while IFS='=' read -r _k _v; do
 done < "$_env_file"
 
 # Services that exist so far, as name=base URL. Each phase adds its services here.
+# Order matters for reset and seed: the operator mock comes after enrollment, so its reset
+# cancels any callback that enrollment's last pushes scheduled.
 SERVICES=(
   "auth=http://localhost:8001"
   "card=http://localhost:8002"
+  "profile=http://localhost:8005"
+  "enrollment=http://localhost:8003"
   "network-mock=http://localhost:8102"
+  "wallet-operator-mock=http://localhost:8101"
 )
 
 service_url() {
@@ -55,7 +60,7 @@ import json, sys
 value = json.loads(sys.argv[1])
 for part in sys.argv[2].split("."):
     value = value[int(part)] if isinstance(value, list) else value.get(part)
-print("" if value is None else (json.dumps(value) if isinstance(value, (dict, list)) else value))
+print("" if value is None else (json.dumps(value) if isinstance(value, (dict, list, bool)) else value))
 ' "$BODY" "$1"
 }
 

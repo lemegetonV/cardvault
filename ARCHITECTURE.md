@@ -5,7 +5,8 @@ application under test: every decision below favours production-like behaviour a
 testability over features. This file records each decision and its tradeoff. It grows with
 each build phase; sections for later phases are marked as such.
 
-Status: **phase 2** (platform, auth-service, card-service, network-mock, CI).
+Status: **phase 3** (platform, auth-service, card-service, network-mock, profile-service,
+enrollment-service, wallet-operator-mock, CI).
 
 ## 1. Services and responsibilities
 
@@ -146,13 +147,18 @@ costs a less useful log line, a false negative leaks card data.
 - **Test controls** are mounted only when `TEST_MODE=true` (otherwise the routes do not exist,
   so they return 404) and need `X-Test-Key`.
 
-### Operator callbacks (used from phase 3)
+### Operator callbacks (and the bank's requests to the operator)
 
 `X-Timestamp` is Unix seconds; the signed string is `"{timestamp}.{raw_body}"`; `X-Signature`
 is lowercase hex HMAC-SHA256. The signature is checked before the timestamp window, so a
 forged request learns nothing about the window. A timestamp more than 300 s away from the
 shared clock (past or future) is rejected; exactly 300 s is accepted. Replay inside the
 window is stopped by `event_id` deduplication, and stale `operator_version`s are ignored.
+
+The bank's requests to the operator are signed the same way with the same shared secret
+(`OPERATOR_HMAC_SECRET`), so the operator mock can reject unsigned calls too. *Tradeoff:*
+one secret for both directions is simpler to rotate as a pair but means a leak of either
+side's copy lets an attacker speak for both; production would use one key per direction.
 
 ### 404 versus 403 for another customer's resource
 
@@ -199,8 +205,11 @@ succeeds. The relay:
 - marks a row published after the broker acknowledges it (`acks=all`). A crash between the
   two re-sends it: delivery is **at-least-once** and every consumer dedupes by `event_id`;
 - backs off in real time (`base * factor^(n-1)`, capped; from env, with fast defaults in
-  TEST_MODE). Event rows retry forever; operator calls (phase 3) stop after 5 attempts and
-  run a give-up hook in the same transaction.
+  TEST_MODE). Event rows retry forever; operator calls stop after 5 attempts, or at once
+  when the handler raises `PermanentDeliveryError` (an operator 4xx), and run a give-up hook
+  in the same transaction;
+- can be limited to some row kinds: enrollment-service runs one relay for events and one
+  for operator calls, so a slow operator never delays events.
 
 *Tradeoff:* polling adds up to 250 ms latency (the API also wakes the relay right after a
 commit); change-data-capture would remove the poll but adds infrastructure.
@@ -327,7 +336,163 @@ retry the same trace) and `clearing_before_auth_event` (settle in the same call)
 State lives in memory; `/test/seed` restores the seed tokens.
 *Tradeoff:* no database to run for a mock, at the cost of losing ad-hoc tokens on restart.
 
-## 11. Fault injection and seeded bugs
+## 11. profile-service (phase 3)
+
+Contact details (`email`, `phone` in E.164) with a verified flag each, and a `version`.
+
+- **Optimistic locking.** `PATCH /v1/profile` takes `If-Match: <version>`; a mismatch is
+  412 `VERSION_MISMATCH`. Without the header the change applies (last write wins). The ETag
+  is the version. *Tradeoff:* making `If-Match` optional keeps simple clients simple, but a
+  client that omits it can overwrite a newer change.
+- A **changed** email or phone resets its verified flag; setting the same value keeps it
+  (rule 35). The version only moves when something changed, and only then is
+  `contact.updated` published (through the outbox, keyed by `customer_id`).
+- **Codes.** `POST /v1/profile/verify/send` has a 30 s cooldown per channel on the shared
+  clock (429 `OTP_COOLDOWN`). Under TEST_MODE the code is always `000000`; otherwise a random
+  code is stored hashed (there is no delivery channel in the simulation). Five wrong codes
+  lock the channel for 15 minutes (423 `OTP_LOCKED`). Wrong-code answers are *returned*
+  rather than raised, so the failure counter commits in the same transaction.
+
+## 12. enrollment-service (phase 3)
+
+The wallet enrolment system of record: one row per card (rule 4), its history, the
+customer's wallet choices, local projections, and every push to the wallet operator.
+
+### Eligibility (spec 6.3, 16.3)
+
+`services/enrollment/eligibility.py` is one pure function over the card, the contact and the
+two preferences, with `now` passed in, so it can be unit-tested without a database. Rules in
+priority order, the first failing one is the reason shown:
+
+| Rule | Reason |
+|---|---|
+| Card ACTIVE | `CARD_NOT_ACTIVE` |
+| Not expired (expires 00:00 UTC on the first day of the month after its expiry month) | `CARD_EXPIRED` |
+| CREDIT or DEBIT | `PRODUCT_NOT_SUPPORTED` |
+| `now - last_used_at <= 90 days`; never used fails | `NOT_RECENTLY_USED` |
+| Customer not opted out | `CUSTOMER_OPTED_OUT` |
+| Card not removed by the customer | `CARD_REMOVED_BY_CUSTOMER` |
+| Email verified | `EMAIL_NOT_VERIFIED` |
+| Phone verified | `PHONE_NOT_VERIFIED` |
+
+**Local projections** of cards (from `card.lifecycle`) and contacts (from
+`contact.updated`) feed it, so eligibility never calls another service synchronously.
+*Tradeoff:* a card change reaches the wallet view after the event (normally well under a
+second); in exchange `GET /v1/wallet` works when card-service or profile-service is down.
+Contact events carry the profile `version` and older ones are ignored; card events need no
+version because they are keyed by `card_id`, so they arrive in order.
+
+### State machine
+
+`PENDING -> ENROLLED`, `ENROLLED <-> SUSPENDED`, any active status `-> REMOVED`,
+`PENDING -> FAILED`, and `REMOVED | FAILED -> PENDING` on re-enrolment (same row, `version`
++1, new `token_ref` from the operator).
+
+- **Who sets what (rule 8).** SUSPENDED, a bank-driven REMOVED and the resumed ENROLLED are
+  set **by callback**, so the SOR only claims what the operator confirmed. A customer remove
+  or opt-out sets REMOVED **at once** (authorization must stop now), then tells the operator.
+- **Pushes go through the outbox** (`kind=operator`, keyed by `enrollment_id`, so pushes for
+  one enrolment are delivered in order: resume before update after a reissue, rule 11).
+  Every push increments `version`, and `Idempotency-Key = enrollment_id:version` (rule 10).
+  A second relay instance handles only operator rows, so a slow or failing operator never
+  delays Kafka events. The `operator_ref` is read at delivery time, because a suspend can be
+  queued right behind the enrol that creates the reference.
+- **Intent.** `pending_action` is the latest push still waiting for its callback; the
+  operator's end state once every queued push is applied is the *intent*. Reactions compare
+  the card with the intent, not with the status, so the reissue's two events
+  (`CARD_ACTIVATED`, `CARD_REISSUED`) produce one resume and one update, not two of each.
+- **Push failures (rule 13, 6.3).** 202 is success and 409 (the operator already has the key)
+  counts as success. 5xx, timeouts and connection errors retry with backoff up to 5 attempts;
+  any other 4xx fails at once. A failed **enrol** sets FAILED with the reason. A failed
+  suspend, resume, update or remove keeps the status, records `failure_reason` and clears
+  `pending_action`, so the next event or the sweep pushes it again (the same rule as a FAILED
+  callback for those actions, rule 9). *Tradeoff:* a lost card whose suspend keeps failing
+  stays ENROLLED at the operator for a while; authorization still declines it (`CARD_LOST`
+  is checked first), so no money moves.
+
+### Reactions
+
+| Trigger | Enrolment active and... | Push |
+|---|---|---|
+| Card CLOSED | intent not REMOVED | Remove (`CARD_CLOSED`), REMOVED by callback |
+| Card LOST | intent ENROLLED | Suspend, SUSPENDED by callback |
+| Card ACTIVE, ineligible | intent not REMOVED | Remove (the eligibility reason) |
+| Card ACTIVE, eligible | intent SUSPENDED | Resume (lost card reissued) |
+| Card ACTIVE, eligible | last4 or expiry changed | Update (reissue) |
+| Contact changed, still eligible | intent ENROLLED | Contact update |
+
+Events never **start** an enrolment. New enrolments come only from the customer (add,
+opt-in) and the sweep, which also retries FAILED cards at most once per card per day
+(rule 5). *Tradeoff:* a card that becomes eligible (for example after dana verifies her
+phone) waits for the daily sweep or a customer action, but the bank never enrols a card the
+customer did not ask for between sweeps.
+
+### Callbacks (`POST /v1/callbacks/operator`)
+
+Checked in this order: signature and timestamp window (401), body shape (422), unknown
+enrolment (404). Then, in one transaction with the row locked:
+
+1. `event_id` is inserted into `processed_callbacks`; a repeat is acknowledged as
+   `DUPLICATE` and changes nothing.
+2. A callback for a REMOVED enrolment is ignored and logged (`IGNORED_REMOVED`).
+3. `operator_version` lower than the stored one is ignored as `STALE`.
+4. A callback that does not match the intent is ignored as `SUPERSEDED`: for example the
+   SUSPENDED for a lost card that was reissued before the callback arrived, or a REMOVED
+   that the bank never asked for. Only applied callbacks advance `operator_version`.
+5. FAILED on a PENDING enrolment sets FAILED; on any other status it is recorded (rule 9).
+
+Every outcome other than an authentication or validation failure is a 200 with a `result`,
+because the operator only needs to know it can stop retrying.
+
+**Versions and card-service.** `enrollment.changed` carries the enrolment `version`.
+card-service applies a token change only when the version is higher than the one it has,
+so redelivered or reordered events cannot move a token backwards. Re-enrolment publishes
+PENDING with no token first, which marks the old token REMOVED in card-service before the
+new one exists.
+
+### Customer API
+
+`GET /v1/wallet` (every card with eligibility and enrolment), `GET /v1/wallet/cards/{id}`,
+`POST /v1/wallet/opt-out`, `POST /v1/wallet/opt-in {terms_version}`,
+`POST /v1/wallet/cards/{id} {terms_version}` (202 PENDING; 200 if already in the wallet;
+409 `WALLET_OPTED_OUT`; 422 `CARD_INELIGIBLE` with the reason) and
+`DELETE /v1/wallet/cards/{id}` (REMOVED at once; sets the per-card preference the sweep
+respects, rule 12). Wallet-wide actions of one customer take a transaction-scoped advisory
+lock, so an opt-out and an add cannot interleave. The `token_ref` is not in the customer
+view; tests read it from `GET /test/enrollments`.
+
+### Test support
+
+`POST /internal/v1/sweep` (TEST_MODE, tests key) runs the daily sweep now.
+`POST /test/customers` is the test orchestrator (rule 45): it creates the login, profile and
+cards through the other services' test APIs, and for `enrolled: true` cards gets a token from
+network-mock, adds the operator record, writes the ENROLLED row and the card-service token
+copy directly, so the token works as soon as the call returns.
+
+**Reset order.** `scripts/lib.sh` lists enrollment before the operator mock, so `make reset`
+cancels the operator's scheduled callbacks after enrollment has stopped pushing, and a late
+callback can never land on freshly seeded rows.
+
+## 13. wallet-operator-mock (phase 3)
+
+A controllable wallet operator with state in memory. Each request from the bank is
+HMAC-verified, needs an `Idempotency-Key` (a repeat returns the original 202 and sends no
+second callback, rule 14), returns 202, and sends a signed callback after
+`OPERATOR_CALLBACK_DELAY_MS` (2 s by default, real time, rule 54). Enrolment asks
+network-mock for a token. The operator keeps one record per `enrollment_id`, so re-enrolment
+reuses the `operator_ref` and `operator_version` keeps rising across re-enrolments; that is
+what makes the stale check work after a remove and re-add. Callbacks to the bank are retried
+3 times on 5xx or a connection error.
+
+Controls (`/test/behaviour`): `callback_delay`, `error` and `timeout` (nothing applied),
+`duplicate_callback`, `out_of_order_callback` (the previous callback is re-sent after the new
+one, with a new `event_id`), `bad_signature`, `drop_callback` and `decline_enrollment`
+(a FAILED callback with a reason). `GET|POST /test/state` shows the records and recent
+callbacks and lets tests change records directly, to create reconciliation findings later.
+`GET /v1/files/enrollments/{date}` is the daily enrolment file (CSV) reconciliation will
+read in phase 4. The embeddable terms and help pages come in phase 5.
+
+## 14. Fault injection and seeded bugs
 
 `POST /test/faults` replaces the active set: `latency`, `error` (5xx), `timeout`,
 `kafka_publish_failure`, `consumer_pause`, `relay_pause`. Each fault can be scoped (method
@@ -339,7 +504,7 @@ start-stack action's `bug_flag` input) turns exactly one on. The flag list lives
 `shared/bugs.py` and `scripts/bugs.txt`; CI checks they agree. `GET /test/bugs` shows which
 flags a service sees. Bug behaviour is implemented in phase 6.
 
-## 12. Continuous integration and resource budget
+## 15. Continuous integration and resource budget
 
 Nothing is hosted. `app-ci.yml` runs on every push and pull request:
 
@@ -364,19 +529,20 @@ to `127.0.0.1` in the base file already, so the override does not need to change
 | 1 | GitHub-hosted runner, 4 vCPU (app-ci run 45179541033) | 19 s | ~237 MiB (redpanda 116, auth 87, postgres 35) |
 | 2 | Cloud dev container pinned to 2 CPUs (CI override) | 23 s | ~532 MiB (redpanda 241, auth 87, network-mock 76, card 74, postgres 55) |
 | 2 | GitHub-hosted runner, 4 vCPU (app-ci run 45206985835) | 33 s | ~529 MiB (redpanda 244, auth 87, network-mock 75, card 73, postgres 50) |
+| 3 | Cloud dev container, 4 CPUs (CI override) | 21 s | ~790 MiB (redpanda 242, auth 87, postgres 83, operator-mock 78, enrollment 78, network-mock 76, card 74, profile 72) |
 
 Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 
-## 13. Agent-ready rules (spec 15.1)
+## 16. Agent-ready rules (spec 15.1)
 
 - Customer actions an agent will need are customer APIs that accept the customer's JWT.
-- Destructive card actions (report lost, close) are idempotent by state and accept
-  `Idempotency-Key`; wallet actions follow in phase 3.
+- Destructive actions (report lost, close, remove a card from the wallet, opt out) are
+  idempotent by state and accept `Idempotency-Key`.
 - Every OpenAPI operation has a `summary` and `description`, and parameters have descriptions.
 - Correlation IDs flow through every hop.
 - Port 8006 and `evals/` are reserved.
 
-## 14. Known limitations
+## 17. Known limitations
 
 - An access token stays valid until it expires (up to 15 minutes) after logout.
 - Per-username lockout can be abused to lock a known account.
@@ -386,4 +552,11 @@ Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 - Holds never expire.
 - Consumers cannot read compressed Kafka batches (snappy, lz4, zstd need extra libraries).
   Our producers do not compress; a tool such as `rpk topic produce` needs `-z none`.
-- network-mock keeps its state in memory.
+- network-mock and wallet-operator-mock keep their state in memory.
+- Changing the email or phone removes every wallet card (the contact is unverified); after
+  re-verification the cards come back at the next sweep, opt-in or add, not at once.
+- Outside TEST_MODE a one-time code is generated and stored hashed but never delivered:
+  there is no email or SMS channel in this simulation.
+- A failed suspend, resume, update or remove push (5 attempts, or an operator 4xx) leaves
+  the status unchanged with a `failure_reason`; the next event or the sweep pushes it again.
+- Reconciliation with the operator's daily file arrives in phase 4.

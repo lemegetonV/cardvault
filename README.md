@@ -10,7 +10,8 @@ It is an **application under test**: it exists so that API and UI test framework
 built against realistic behaviour (auth, idempotency, events, signed callbacks, failures,
 reconciliation) with test-only controls, deterministic seed data and observable state.
 
-> Build status: phase 2 of 6 (platform, auth-service, card-service, network-mock, CI).
+> Build status: phase 3 of 6 (platform, auth-service, card-service, network-mock,
+> profile-service, enrollment-service, wallet-operator-mock, CI).
 > See `SPEC.md` section 13.
 
 ## Quick start
@@ -27,6 +28,9 @@ make smoke   # end-to-end smoke test
 |---|---|
 | http://localhost:8001/docs | auth-service OpenAPI |
 | http://localhost:8002/docs | card-service OpenAPI |
+| http://localhost:8003/docs | enrollment-service OpenAPI (wallet) |
+| http://localhost:8005/docs | profile-service OpenAPI |
+| http://localhost:8101/docs | wallet-operator-mock OpenAPI |
 | http://localhost:8102/docs | network-mock OpenAPI |
 | http://localhost:8080 | Redpanda Console |
 | `127.0.0.1:19092` | Kafka (Redpanda) from the host |
@@ -49,6 +53,19 @@ curl -s localhost:8102/v1/test/purchases -H 'X-Test-Key: cv-test-key-local' \
 curl -s -X POST localhost:8102/v1/test/purchases/<trace_id>/settle -H 'X-Test-Key: cv-test-key-local'
 ```
 
+View alice's wallet, report her credit card lost and watch the enrolment become SUSPENDED
+(the operator mock confirms by signed callback about 2 seconds later):
+
+```bash
+TOKEN=$(curl -s localhost:8001/v1/auth/login -H 'content-type: application/json' \
+  -d '{"username":"alice","password":"CardVault-Demo-1"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+curl -s localhost:8003/v1/wallet -H "Authorization: Bearer $TOKEN"
+curl -s -X POST localhost:8002/v1/cards/ca4d0000-a11c-4000-8000-000000000001/report-lost \
+  -H "Authorization: Bearer $TOKEN"
+sleep 3; curl -s localhost:8003/v1/wallet/cards/ca4d0000-a11c-4000-8000-000000000001 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ## Make targets
 
 | Target | What it does |
@@ -65,6 +82,11 @@ curl -s -X POST localhost:8102/v1/test/purchases/<trace_id>/settle -H 'X-Test-Ke
 
 Every service: `POST /test/reset`, `POST /test/seed`, `GET|POST /test/faults`,
 `GET|POST /test/clock`, `GET /test/quiet`, `GET /test/bugs`. See `ARCHITECTURE.md`.
+
+- enrollment-service: `POST /test/customers` (a fresh customer with cards, optionally
+  enrolled), `GET /test/enrollments` (includes `token_ref`), and the daily sweep at
+  `POST /internal/v1/sweep` (tests `X-Service-Key`).
+- Both mocks: `GET|POST /test/behaviour` (controls) and `GET|POST /test/state`.
 
 ## Continuous integration
 

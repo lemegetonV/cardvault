@@ -29,13 +29,16 @@ The list grows with each phase.
 | `FAULT_INJECTED` | 5xx | An injected `error` fault fired (status as configured, default 503) |
 | `FAULT_TIMEOUT` | 504 | An injected `timeout` fault fired |
 
-## Callback signatures (used from phase 3)
+## Callback signatures
 
 | error_code | HTTP | When |
 |---|---|---|
 | `SIGNATURE_MISSING` | 401 | `X-Signature` or `X-Timestamp` missing |
 | `SIGNATURE_INVALID` | 401 | Signature does not match, or `X-Timestamp` is not Unix seconds |
 | `SIGNATURE_EXPIRED` | 401 | `X-Timestamp` more than 300 s from the shared clock |
+
+The same three codes are returned by the wallet operator mock when a request from the bank
+is not signed correctly.
 
 ## auth-service
 
@@ -77,3 +80,50 @@ Authorization declines are not errors: they are `200` with `decision: DECLINED` 
 | `TRACE_UNKNOWN` | 404 | Settle, reverse or refund for a `trace_id` the network never sent |
 
 Other network-mock responses pass card-service's status and body through unchanged.
+
+## profile-service
+
+| error_code | HTTP | When |
+|---|---|---|
+| `PROFILE_NOT_FOUND` | 404 | The customer has no profile |
+| `INVALID_IF_MATCH` | 400 | `If-Match` is not a version number |
+| `VERSION_MISMATCH` | 412 | `If-Match` differs from the current version. `details.current_version` |
+| `CONTACT_MISSING` | 422 | Verifying a channel with no email or phone set |
+| `ALREADY_VERIFIED` | 409 | Asking for a code for a channel that is already verified |
+| `OTP_COOLDOWN` | 429 | A code was sent less than 30 s ago. `details.retry_after_seconds` |
+| `OTP_INVALID` | 422 | Wrong code. `details.attempts_remaining` |
+| `OTP_LOCKED` | 423 | Fifth wrong code, or a code while locked (15 minutes). `details.locked_until` |
+| `PROFILE_EXISTS` | 409 | `POST /test/profiles` for a customer that has a profile |
+
+`PATCH /v1/profile` validation errors (email shape, phone not E.164) are `VALIDATION_ERROR`.
+
+## enrollment-service
+
+| error_code | HTTP | When |
+|---|---|---|
+| `CARD_NOT_FOUND` | 404 | No such card in the wallet, or another customer's card (deliberately the same) |
+| `WALLET_OPTED_OUT` | 409 | Adding a card while opted out (opt in first) |
+| `CARD_INELIGIBLE` | 422 | Adding an ineligible card. `details.reason` is the eligibility reason code |
+| `ENROLLMENT_NOT_FOUND` | 404 | Operator callback for an unknown `enrollment_id` |
+| `ORCHESTRATION_FAILED` | 502 | `POST /test/customers`: a call to another service failed. `details.upstream` |
+
+A missing `terms_version` on opt-in or add-card is `VALIDATION_ERROR` (422).
+
+Eligibility reason codes (in priority order; the first failing one is shown):
+`CARD_NOT_ACTIVE`, `CARD_EXPIRED`, `PRODUCT_NOT_SUPPORTED`, `NOT_RECENTLY_USED`,
+`CUSTOMER_OPTED_OUT`, `CARD_REMOVED_BY_CUSTOMER`, `EMAIL_NOT_VERIFIED`, `PHONE_NOT_VERIFIED`.
+
+Operator callbacks that are acknowledged but change nothing are not errors: they return 200
+with `result` set to `DUPLICATE`, `STALE`, `SUPERSEDED`, `IGNORED_REMOVED` or
+`FAILURE_RECORDED` (`APPLIED` when the callback took effect).
+
+## wallet-operator-mock
+
+| error_code | HTTP | When |
+|---|---|---|
+| `IDEMPOTENCY_KEY_REQUIRED` | 422 | A request from the bank without `Idempotency-Key` |
+| `IDEMPOTENCY_KEY_REUSED` | 409 | The same key with a different request (the bank treats 409 as already done) |
+| `ENROLLMENT_UNKNOWN` | 404 | No record with this `operator_ref` |
+| `ENROLLMENT_REMOVED` | 422 | Update, suspend or resume on a removed record |
+| `OPERATOR_UNAVAILABLE` | 5xx | The `error` control fired (nothing was applied) |
+| `OPERATOR_TIMEOUT` | 504 | The `timeout` control fired, after hanging (nothing was applied) |

@@ -133,8 +133,8 @@ expect_eq "$(json status)" "ACTIVE" "reissued card is ACTIVE"
 [[ "$(json expiry)" != "$OLD_EXPIRY" ]] || fail "reissue sets a new expiry"
 pass "reissue sets a new expiry"
 expect_eq "$(json card_id)" "$ALICE_CREDIT" "card_id is unchanged"
-purchase "$TOK_ALICE_CREDIT" 100
-expect_eq "$(json decision)" "APPROVED" "the wallet token works after reissue"
+# The wallet token after report-lost and reissue depends on the enrolment flow (suspend,
+# resume, update callbacks), so smoke-wallet.sh checks it with waits.
 
 req POST "$CARD/v1/cards/$ALICE_DEBIT/close" "" -H "Authorization: Bearer $ALICE"
 expect_eq "$(json status)" "CLOSED" "close the debit card"

@@ -3,7 +3,9 @@
 # Phase 1 covers the platform (probes, error shape, correlation IDs, shared clock) and
 # auth-service (login, JWKS, /me, refresh rotation and reuse, logout, lockout).
 # Phase 2 adds card-service and network-mock: cards, lifecycle, authorization, holds,
-# clearing, idempotency. Later phases extend it towards spec section 11.
+# clearing, idempotency. Phase 3 adds profile-service, enrollment-service and the wallet
+# operator mock: the wallet, lost and reissue, opt-out and opt-in, callbacks, eligibility.
+# Later phases extend it towards spec section 11.
 # It starts by resetting and reseeding the stack, so it can be run again and again.
 source "$(dirname "$0")/lib.sh"
 
@@ -107,6 +109,15 @@ req GET "$AUTH/v1/auth/me" "" -H "Authorization: Bearer $BOB_ACCESS"
 expect_status 401 "bob's access token has expired on the shared clock"
 expect_eq "$(json error_code)" "TOKEN_EXPIRED" "expiry code"
 test_req POST "$AUTH/test/clock" '{"reset": true}'; expect_status 200 "clock back to real time"
+for entry in "${SERVICES[@]}"; do   # other services follow within 1 s (rule 44)
+  for _ in $(seq 1 20); do
+    test_req GET "${entry#*=}/test/clock"
+    [[ "$(json offset_seconds)" == 0.0 ]] && break
+    sleep 0.1
+  done
+  [[ "$(json offset_seconds)" == 0.0 ]] || fail "${entry%%=*} follows the clock reset"
+done
+pass "every service is back at real time"
 req GET "$AUTH/v1/auth/me" "" -H "Authorization: Bearer $BOB_ACCESS"
 expect_status 200 "bob's token is valid again at real time"
 
@@ -121,5 +132,9 @@ req POST "$AUTH/v1/auth/login" "$(login_body alice "$PASSWORD")"
 expect_status 200 "the fault expired after one use"
 
 source "$(dirname "$0")/smoke-cards.sh"
+
+# The card checks change alice's cards, so the wallet checks start from a fresh seed.
+"$(dirname "$0")/reset.sh" >/dev/null
+source "$(dirname "$0")/smoke-wallet.sh"
 
 printf '\nSmoke passed: %d checks.\n' "$PASSED"

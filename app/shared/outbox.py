@@ -11,6 +11,9 @@ succeeds. A background relay drains the table:
   Consumers dedupe by ``event_id``.
 * Failures back off in real time (base, factor, cap from env). Event rows retry forever;
   rows of a kind with ``max_attempts`` set are marked failed and handed to ``on_give_up``.
+  A handler raises ``PermanentDeliveryError`` to give up at once (for example an operator
+  4xx, which a retry cannot fix).
+* A relay can be limited to some ``kinds``, so slow HTTP pushes never delay events.
 """
 
 from __future__ import annotations
@@ -35,6 +38,10 @@ from shared.settings import BackoffSettings
 log = logging.getLogger(__name__)
 
 KIND_EVENT = "event"
+
+
+class PermanentDeliveryError(RuntimeError):
+    """Raised by a deliver function when retrying cannot help: the row fails at once."""
 
 
 def _columns() -> list[sa.Column]:
@@ -155,8 +162,10 @@ class OutboxRelay:
         handlers: dict[str, KindHandler],
         poll_interval: float = 0.25,
         batch_size: int = 100,
+        kinds: list[str] | None = None,
     ) -> None:
         self.db = db
+        self.kinds = kinds
         self.table = table
         self.handlers = handlers
         self.poll_interval = poll_interval
@@ -168,7 +177,15 @@ class OutboxRelay:
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
-        self._task = asyncio.create_task(self._run(), name=f"relay-{self.table.name}")
+        name = f"relay-{self.table.name}-{'-'.join(self.kinds or ['all'])}"
+        self._task = asyncio.create_task(self._run(), name=name)
+
+    def _pending(self):
+        t = self.table
+        cond = sa.and_(t.c.published_at.is_(None), t.c.failed_at.is_(None))
+        if self.kinds:
+            cond = sa.and_(cond, t.c.kind.in_(self.kinds))
+        return cond
 
     async def stop(self) -> None:
         if self._task:
@@ -189,11 +206,7 @@ class OutboxRelay:
 
     async def depth(self) -> int:
         async with self.db.session() as s:
-            q = (
-                sa.select(sa.func.count())
-                .select_from(self.table)
-                .where(self.table.c.published_at.is_(None), self.table.c.failed_at.is_(None))
-            )
+            q = sa.select(sa.func.count()).select_from(self.table).where(self._pending())
             return int(await s.scalar(q) or 0)
 
     async def _run(self) -> None:
@@ -219,12 +232,7 @@ class OutboxRelay:
 
     async def drain_once(self) -> int:
         t = self.table
-        heads = (
-            sa.select(t.c.id)
-            .where(t.c.published_at.is_(None), t.c.failed_at.is_(None))
-            .order_by(t.c.key, t.c.id)
-            .distinct(t.c.key)
-        )
+        heads = sa.select(t.c.id).where(self._pending()).order_by(t.c.key, t.c.id).distinct(t.c.key)
         query = (
             sa.select(t)
             .where(t.c.id.in_(heads), t.c.next_attempt_at <= sa.func.now())
@@ -253,7 +261,10 @@ class OutboxRelay:
         except Exception as exc:
             attempts = row.attempts + 1
             error = f"{type(exc).__name__}: {exc}"[:1000]
-            give_up = handler is not None and 0 < handler.backoff.max_attempts <= attempts
+            give_up = handler is not None and (
+                isinstance(exc, PermanentDeliveryError)
+                or 0 < handler.backoff.max_attempts <= attempts
+            )
             if give_up:
                 log.error("outbox row failed permanently", extra={"outbox_id": row.id})
                 await session.execute(

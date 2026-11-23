@@ -156,6 +156,62 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8002/ready', timeout=2)"]
     restart: unless-stopped
 
+  profile:
+    build:
+      context: ./app
+      args:
+        SERVICE: profile
+    image: cardvault/profile:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: profile
+      PORT: "8005"
+      DATABASE_URL: postgresql+asyncpg://profile_svc:${PROFILE_DB_PASSWORD}@postgres:5432/profile
+    ports:
+      - "127.0.0.1:8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8005/ready', timeout=2)"]
+    restart: unless-stopped
+
+  enrollment:
+    build:
+      context: ./app
+      args:
+        SERVICE: enrollment
+    image: cardvault/enrollment:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: enrollment
+      PORT: "8003"
+      DATABASE_URL: postgresql+asyncpg://enrollment_svc:${ENROLLMENT_DB_PASSWORD}@postgres:5432/enrollment
+      OPERATOR_INTERNAL_URL: http://wallet-operator-mock:8101
+      OPERATOR_HMAC_SECRET: ${OPERATOR_HMAC_SECRET}
+      AUTH_URL: http://auth:8001
+      CARD_URL: http://card:8002
+      PROFILE_URL: http://profile:8005
+      NETWORK_URL: http://network-mock:8102
+    ports:
+      - "127.0.0.1:8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8003/ready', timeout=2)"]
+    restart: unless-stopped
+
   network-mock:
     build:
       context: ./app
@@ -175,6 +231,31 @@ services:
     healthcheck:
       <<: *python-healthcheck
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8102/ready', timeout=2)"]
+    restart: unless-stopped
+
+  wallet-operator-mock:
+    build:
+      context: ./app
+      args:
+        SERVICE: wallet_operator
+    image: cardvault/wallet-operator-mock:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: wallet-operator-mock
+      PORT: "8101"
+      BANK_CALLBACK_URL: http://enrollment:8003/v1/callbacks/operator
+      NETWORK_URL: http://network-mock:8102
+      OPERATOR_HMAC_SECRET: ${OPERATOR_HMAC_SECRET}
+      OPERATOR_CALLBACK_DELAY_MS: ${OPERATOR_CALLBACK_DELAY_MS:-2000}
+      OPERATOR_PUBLIC_URL: ${OPERATOR_PUBLIC_URL:-http://localhost:8101}
+    ports:
+      - "127.0.0.1:8101:8101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8101/ready', timeout=2)"]
     restart: unless-stopped
 
 volumes:

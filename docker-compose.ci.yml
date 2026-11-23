@@ -39,7 +39,22 @@ services:
     environment:
       LOG_LEVEL: INFO
 
+  profile:
+    <<: *ci-python
+    environment:
+      LOG_LEVEL: INFO
+
+  enrollment:
+    <<: *ci-python
+    environment:
+      LOG_LEVEL: INFO
+
   network-mock:
+    <<: *ci-python
+    environment:
+      LOG_LEVEL: INFO
+
+  wallet-operator-mock:
     <<: *ci-python
     environment:
       LOG_LEVEL: INFO

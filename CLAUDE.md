@@ -23,7 +23,7 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 ## Phase status
 - [x] 1. Monorepo, compose + CI override, `shared`, auth-service, Makefile, smoke, start-stack action, app-ci
 - [x] 2. card-service + network-mock
-- [ ] 3. profile-service + enrollment-service + wallet-operator-mock
+- [x] 3. profile-service + enrollment-service + wallet-operator-mock
 - [ ] 4. wallet-txn-service + every Kafka flow + DLQs + reconciliation
 - [ ] 5. web app + the 10 Playwright coverage features + operator embed/help pages
 - [ ] 6. Seeded bugs + full docs
@@ -36,11 +36,18 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
   `migrations/` (Alembic, hand-written, run by the entrypoint at container start).
 - `app/Dockerfile`: one image recipe, `ARG SERVICE` selects `services.<name>` or `mocks.<name>`.
 - `app/infra/postgres/01-databases.sh`: databases, roles, the shared clock table.
-- `scripts/lib.sh`: the `SERVICES` list (add each new service here), `req`/`json` helpers.
+- `scripts/lib.sh`: the `SERVICES` list (add each new service here; order is the reset and
+  seed order, and the operator mock must stay after enrollment), `req`/`json` helpers.
 - `scripts/smoke.sh` resets and reseeds first, then runs; per-phase parts are sourced
-  (`smoke-cards.sh`).
+  (`smoke-cards.sh`, then a reseed, then `smoke-wallet.sh`). Callback-driven statuses are
+  polled with `wait_until`, never slept for.
 - `app/shared/seed_data.py`: seed cards, enrolments and tokens shared by all services/mocks.
 - `app/mocks/<name>/main.py`: mocks use `create_app` too (`uses_db=False`, state in memory).
+- enrollment-service: `domain.py` holds the state machine (pushes, `intent()`, callbacks,
+  reactions); `eligibility.py` is the pure eligibility function; `operator_client.py`
+  delivers `kind=operator` outbox rows. Seed cards have fixed `last4`s in `seed_data.LAST4`.
+- `OutboxRelay(kinds=[...])` limits a relay to some row kinds; a deliver function raises
+  `PermanentDeliveryError` to give up at once.
 
 ## Adding a service (checklist)
 1. `app/services/<name>/` with `main.py`, `models.py`, `migrations/` (copy auth's env.py).

@@ -1,8 +1,11 @@
 """Deterministic seed cards and wallet enrolments (spec section 10, 16.10 rule 64).
 
-card-service, network-mock and (from phase 3) enrollment-service and the operator mock
-all seed from these constants, so every database and mock agrees on IDs and tokens.
+card-service, network-mock, profile-service, enrollment-service and the operator mock all
+seed from these constants, so every database and mock agrees on IDs, last4s and tokens.
 Amounts are integer cents. ``used_days_ago`` is relative to the shared clock at seed time.
+
+Each seed card has a fixed ``last4``; card-service generates a Luhn-valid number that ends
+with it. Other services only ever see the ``last4`` (no full number leaves card-service).
 """
 
 from __future__ import annotations
@@ -34,6 +37,10 @@ class SeedCard:
     expiry: str  # YYYY-MM
     label: str
     enrollment: SeedEnrollment | None = None
+
+    @property
+    def last4(self) -> str:
+        return LAST4[self.label]
 
 
 def _u(value: str) -> uuid.UUID:
@@ -169,6 +176,48 @@ CARDS: tuple[SeedCard, ...] = (
 
 BY_LABEL = {c.label: c for c in CARDS}
 
+LAST4 = {
+    "alice-credit": "4417",
+    "alice-debit": "2045",
+    "alice-credit-unused": "7380",
+    "alice-prepaid": "5521",
+    "bob-credit": "1029",
+    "bob-debit-lost": "8836",
+    "charlie-credit": "6604",
+    "dana-credit": "3172",
+    "dana-debit": "9958",
+}
+
+# Terms version every seed enrolment and opt-in was accepted under.
+TERMS_VERSION = "2026-01"
+
+
+@dataclass(frozen=True)
+class SeedContact:
+    email: str
+    email_verified: bool
+    phone: str
+    phone_verified: bool
+    version: int = 1
+
+
+# example.com is reserved for documentation; +1 555-01xx numbers are fictional.
+CONTACTS: dict[uuid.UUID, SeedContact] = {
+    seed_ids.ALICE: SeedContact("alice@example.com", True, "+15550100101", True),
+    seed_ids.BOB: SeedContact("bob@example.com", True, "+15550100102", True),
+    seed_ids.CHARLIE: SeedContact("charlie@example.com", True, "+15550100103", True),
+    seed_ids.DANA: SeedContact("dana@example.com", True, "+15550100104", False),
+}
+
+# Customers who opted out of the wallet (spec section 10).
+OPTED_OUT = frozenset({seed_ids.CHARLIE})
+
+
+def operator_ref(enrollment_id: uuid.UUID) -> str:
+    """The operator mock's reference for an enrolment (seed data uses the same rule)."""
+    return "op_" + enrollment_id.hex
+
+
 PAN_PREFIX = "990000"  # fictional issuer prefix, not assigned to any real network
 
 
@@ -184,12 +233,21 @@ def luhn_check_digit(partial: str) -> str:
     return str((10 - total % 10) % 10)
 
 
-def make_pan(rng: random.Random) -> str:
-    body = PAN_PREFIX + "".join(str(rng.randrange(10)) for _ in range(9))
-    return body + luhn_check_digit(body)
+def make_pan(rng: random.Random, last4: str | None = None) -> str:
+    """A Luhn-valid 16-digit number with the fictional prefix, optionally ending in ``last4``.
+
+    The last digit is the check digit, so for a fixed ``last4`` the middle digits are drawn
+    again until the check digit comes out right (about 10 draws).
+    """
+    while True:
+        middle = "".join(str(rng.randrange(10)) for _ in range(6 if last4 else 9))
+        body = PAN_PREFIX + middle + (last4[:3] if last4 else "")
+        pan = body + luhn_check_digit(body)
+        if last4 is None or pan.endswith(last4):
+            return pan
 
 
 def seed_pans() -> dict[uuid.UUID, str]:
-    """One deterministic, Luhn-valid PAN per seed card."""
+    """One deterministic, Luhn-valid PAN per seed card, ending in the card's fixed last4."""
     rng = random.Random(seed_ids.SEED)
-    return {card.card_id: make_pan(rng) for card in CARDS}
+    return {card.card_id: make_pan(rng, card.last4) for card in CARDS}
