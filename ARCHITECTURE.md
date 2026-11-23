@@ -363,6 +363,7 @@ to `127.0.0.1` in the base file already, so the override does not need to change
 | 1 | Cloud dev container pinned to 2 CPUs (CI override) | 11 s | ~380 MiB (redpanda 237, auth 103, postgres 42) |
 | 1 | GitHub-hosted runner, 4 vCPU (app-ci run 45179541033) | 19 s | ~237 MiB (redpanda 116, auth 87, postgres 35) |
 | 2 | Cloud dev container pinned to 2 CPUs (CI override) | 23 s | ~532 MiB (redpanda 241, auth 87, network-mock 76, card 74, postgres 55) |
+| 2 | GitHub-hosted runner, 4 vCPU (app-ci run 45206985835) | 33 s | ~529 MiB (redpanda 244, auth 87, network-mock 75, card 73, postgres 50) |
 
 Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 
