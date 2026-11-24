@@ -6,7 +6,7 @@
 # clearing, idempotency. Phase 3 adds profile-service, enrollment-service and the wallet
 # operator mock: the wallet, lost and reissue, opt-out and opt-in, callbacks, eligibility.
 # Phase 4 adds wallet-txn-service (transactions, export, disputes), the Kafka flows into it,
-# DLQs and reconciliation. Phase 5 adds the web app.
+# DLQs and reconciliation. Phase 5 adds the web app's BFF and the operator's embed pages.
 # It starts by resetting and reseeding the stack, so it can be run again and again.
 source "$(dirname "$0")/lib.sh"
 
@@ -141,5 +141,6 @@ source "$(dirname "$0")/smoke-wallet.sh"
 # Reconciliation needs the operator and the SOR to agree, so phase 4 starts fresh too.
 "$(dirname "$0")/reset.sh" >/dev/null
 source "$(dirname "$0")/smoke-txns.sh"
+source "$(dirname "$0")/smoke-web.sh"
 
 printf '\nSmoke passed: %d checks.\n' "$PASSED"

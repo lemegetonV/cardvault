@@ -258,6 +258,39 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8004/ready', timeout=2)"]
     restart: unless-stopped
 
+  web:
+    build:
+      context: ./app/web
+    image: cardvault/web:local
+    environment:
+      AUTH_URL: http://auth:8001
+      CARD_URL: http://card:8002
+      ENROLLMENT_URL: http://enrollment:8003
+      WALLET_TXN_URL: http://wallet-txn:8004
+      PROFILE_URL: http://profile:8005
+      OPERATOR_PUBLIC_URL: ${OPERATOR_PUBLIC_URL:-http://localhost:8101}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      auth:
+        condition: service_healthy
+      card:
+        condition: service_healthy
+      enrollment:
+        condition: service_healthy
+      wallet-txn:
+        condition: service_healthy
+      profile:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
   wallet-operator-mock:
     build:
       context: ./app
@@ -273,6 +306,7 @@ services:
       OPERATOR_HMAC_SECRET: ${OPERATOR_HMAC_SECRET}
       OPERATOR_CALLBACK_DELAY_MS: ${OPERATOR_CALLBACK_DELAY_MS:-2000}
       OPERATOR_PUBLIC_URL: ${OPERATOR_PUBLIC_URL:-http://localhost:8101}
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     ports:
       - "127.0.0.1:8101:8101"
     depends_on:

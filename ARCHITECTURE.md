@@ -5,8 +5,8 @@ application under test: every decision below favours production-like behaviour a
 testability over features. This file records each decision and its tradeoff. It grows with
 each build phase; sections for later phases are marked as such.
 
-Status: **phase 4** (platform, auth-service, card-service, network-mock, profile-service,
-enrollment-service with reconciliation, wallet-operator-mock, wallet-txn-service, CI).
+Status: **phase 5** (platform, auth-service, card-service, network-mock, profile-service,
+enrollment-service with reconciliation, wallet-operator-mock, wallet-txn-service, web app, CI).
 
 ## 1. Services and responsibilities
 
@@ -497,7 +497,8 @@ one, with a new `event_id`), `bad_signature`, `drop_callback` and `decline_enrol
 (a FAILED callback with a reason). `GET|POST /test/state` shows the records and recent
 callbacks and lets tests change records directly, to create reconciliation findings.
 `GET /v1/files/enrollments/{date}` is the daily enrolment file (CSV, HMAC-signed GET) that
-reconciliation reads. The embeddable terms and help pages come in phase 5.
+reconciliation reads. `GET /embed/terms` and `GET /help` are the embeddable pages
+(section 16).
 
 ## 14. wallet-txn-service (phase 4)
 
@@ -609,7 +610,95 @@ If the file cannot be fetched the run is stored as FAILED and the call returns 5
 `OPERATOR_FILE_UNAVAILABLE` with the `run_id`, so a failed run is still visible afterwards.
 The business date defaults to today on the shared clock (rule 43).
 
-## 16. Fault injection and seeded bugs
+## 16. Web app (phase 5)
+
+Next.js (App Router, TypeScript) in `app/web`, no UI or CSS framework: one stylesheet, plain
+React state. Every page is a client component that calls the app's own route handlers (the
+**BFF**); the browser never talks to a service directly, and services allow no browser CORS.
+
+### BFF and session
+
+- `POST /api/auth/login|refresh|logout` and `GET /api/auth/session` wrap auth-service.
+  The access token goes into an `HttpOnly; SameSite=Lax; Path=/` cookie, the refresh token
+  into a second HttpOnly cookie scoped to `/api/auth`, and `Secure` is added only when
+  `COOKIE_SECURE=true` (rule 41). The response body never contains a token.
+- `/api/<resource>/...` (`app/api/[...path]/route.ts`) forwards to the owning service:
+  `cards` to card-service, `profile` to profile-service, `wallet/transactions` and
+  `wallet/disputes` to wallet-txn-service, the rest of `wallet` to enrollment-service. It
+  adds `Authorization: Bearer` from the cookie and a correlation ID, forwards
+  `Content-Type`, `If-Match` and `Idempotency-Key`, and passes status, body and the
+  headers tests rely on (`Content-Disposition`, `ETag`, `Idempotent-Replayed`) through
+  unchanged, so an injected fault reaches the UI exactly as the service sent it. Multipart
+  bodies are forwarded as raw bytes.
+  *Tradeoff:* a generic proxy is little code and cannot drift from the services' APIs; the
+  cost is that the BFF does no response shaping, so the UI works with the service models.
+- **CSRF** (rule 41): `middleware.ts` sets a random `cv_csrf` cookie that the page can read;
+  every non-GET BFF call must echo it in `X-CSRF-Token` (double submit), else 403
+  `CSRF_FAILED`. Login is covered too, against login CSRF.
+- **Session timer** (rule 53, feature 6): the session lasts 15 minutes from the latest login
+  or refresh. The BFF tells the page how long is left (`session_expires_in`, from a
+  server-side expiry cookie), and the page counts down with `Date.now()` and `setInterval`,
+  so Playwright's `page.clock` drives it. At 14:00 a `role="alertdialog"` offers
+  **Stay signed in** (refresh, timer restarts) or **Sign out**; at 15:00 the page signs out.
+  *Tradeoff:* the timer is real browser time, while token expiry is checked by the services
+  against the shared clock; moving the shared clock expires tokens without the warning, which
+  the UI then handles as a 401 (back to `/login?reason=expired`).
+- Signed-out visits to app pages are redirected to `/login?next=...` (same-site paths
+  only). Pages are rendered per request, so `OPERATOR_PUBLIC_URL` is read at run time.
+
+### Security headers
+
+CSP per request: `default-src 'self'`, `frame-src <OPERATOR_PUBLIC_URL>` only,
+`frame-ancestors 'none'`, `connect-src 'self'`, `object-src 'none'`, plus
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+and `X-Frame-Options: DENY`. `merchant_name` and every other service string is rendered
+as React text, never as HTML; ESLint's `react/no-danger` rule fails the build if anyone
+adds `dangerouslySetInnerHTML`. *Tradeoff:* `script-src` allows `'unsafe-inline'` because
+Next.js inlines its bootstrap scripts; a nonce-based CSP would need every page rendered with
+the nonce. The escaping, not the CSP, is the XSS defence that the seeded UI bug removes.
+
+### Playwright coverage features (spec 6.6)
+
+| # | Where | How |
+|---|---|---|
+| 1 | `/wallet` add and opt in | `ConsentDialog`: an iframe of the operator's `/embed/terms`; "I agree" and "Continue" are inside it. The frame posts `{type: "terms-accepted", version}`; the page accepts it only from the operator's origin, then enables the confirm button and sends `terms_version` |
+| 2 | `/wallet` | "Wallet help" link, `target="_blank" rel="noopener noreferrer"`, to the operator's `/help` |
+| 3 | `/cards` | "Close card" asks with `window.confirm()`; opt-out uses a `role="dialog"` modal |
+| 4 | `/wallet/transactions` | "Export CSV" downloads `/api/wallet/transactions/export` for the applied filters |
+| 5 | transaction detail | reason `<select>`, note `<textarea>` (500), receipt `<input type="file">`, success toast, then a "Dispute open" badge; no Dispute button unless the status is disputable |
+| 6 | shell, `/profile` | session warning (above); OTP "Resend in N s" for 30 s after a send, or after a 429 |
+| 7 | `/wallet/transactions` | card checkboxes, status `<select>`, `from`/`to` dates, filters in the URL query, "Load more" with the cursor, 20 per page |
+| 8 | everywhere | mobile-first CSS; below 768 px the navigation and the filters collapse behind "Menu" and "Filters" buttons; lists are cards, not tables, so nothing scrolls sideways at 375 px |
+| 9 | everywhere | `Intl.DateTimeFormat` and `Intl.NumberFormat` with the browser's locale and timezone; amounts in USD |
+| 10 | everywhere | toasts with `role="status"` that go after 4 s; every submit button is disabled while its request runs |
+
+**Dates** (rule 55): the filter inputs hold local dates and so does the page URL. The page
+sends the services the UTC instants where the local `from` day starts and the local `to` day
+ends. For the export it also sends the local dates, and the BFF uses them for the filename
+(`wallet-transactions-<from>-<to>.csv`, `all` when omitted) and strips them before calling
+the service, which would otherwise name the file after the UTC dates.
+**Polling** (rule 54): a PENDING card is polled every 2 s (real time) and polling stops
+after 60 s with a "Still pending" note.
+
+Every interactive or asserted element has a `data-testid`; pages show loading, empty and
+error states (`loading`, `empty-state`, `error-state` with a retry button).
+
+### The operator's pages
+
+`GET /embed/terms` (wallet-operator-mock, plain HTML, no auth) sends
+`Content-Security-Policy: frame-ancestors <WEB_ALLOWED_ORIGINS>`. Its script posts the
+message once to each allowed origin; the browser delivers it only where the target origin
+matches the real parent, so the page never needs to know which allowed origin framed it.
+`GET /help` is a static page.
+
+### Build and run
+
+A multi-stage Dockerfile (`npm ci` layer, `next build`, then only the standalone server on
+`node:22-alpine`, running as `node`). The health check is `GET /api/health`.
+*Tradeoff:* `output: "standalone"` keeps the image small and the start fast, but the server
+runs only what the build traced, so new server-side files must be imported to be included.
+
+## 17. Fault injection and seeded bugs
 
 `POST /test/faults` replaces the active set: `latency`, `error` (5xx), `timeout`,
 `kafka_publish_failure`, `consumer_pause`, `relay_pause`. Each fault can be scoped (method
@@ -621,12 +710,12 @@ start-stack action's `bug_flag` input) turns exactly one on. The flag list lives
 `shared/bugs.py` and `scripts/bugs.txt`; CI checks they agree. `GET /test/bugs` shows which
 flags a service sees. Bug behaviour is implemented in phase 6.
 
-## 17. Continuous integration and resource budget
+## 18. Continuous integration and resource budget
 
 Nothing is hosted. `app-ci.yml` runs on every push and pull request:
 
 - `lint`: ruff check and format check on `app/`, event schemas up to date, bug lists agree,
-  shell scripts parse; `tsc` and ESLint on `app/web` once it exists (phase 5).
+  shell scripts parse; `tsc` and ESLint (no warnings allowed) on `app/web`.
 - `stack-smoke`: the start-stack composite action, then `make smoke`, then always: resource
   usage, `docker compose logs` uploaded as an artifact (7 days), `docker compose down -v`.
 
@@ -650,10 +739,11 @@ to `127.0.0.1` in the base file already, so the override does not need to change
 | 3 | GitHub-hosted runner, 2 vCPU (app-ci run 45279230900) | 38 s | ~809 MiB (redpanda 250, auth 103, enrollment 77, operator-mock 77, postgres 76, network-mock 76, profile 76, card 74) |
 | 4 | Cloud dev container, 4 CPUs (CI override) | 22 s | ~900 MiB (redpanda 242, auth 101, postgres 97, wallet-txn 79, enrollment 78, operator-mock 78, network-mock 77, card 74, profile 73) |
 | 4 | GitHub-hosted runner, 2 vCPU (app-ci run 45366433574) | 35 s | ~903 MiB (redpanda 245, auth 103, postgres 88, enrollment 88, wallet-txn 79, operator-mock 77, network-mock 77, card 75, profile 72) |
+| 5 | Cloud dev container, 4 CPUs (CI override) | 21 s | ~967 MiB (redpanda 241, auth 103, postgres 97, profile 83, wallet-txn 79, enrollment 78, operator-mock 78, network-mock 77, card 75, web 56) |
 
 Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 
-## 18. Agent-ready rules (spec 15.1)
+## 19. Agent-ready rules (spec 15.1)
 
 - Customer actions an agent will need are customer APIs that accept the customer's JWT.
 - Destructive actions (report lost, close, remove a card from the wallet, opt out) are
@@ -662,7 +752,7 @@ Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 - Correlation IDs flow through every hop.
 - Port 8006 and `evals/` are reserved.
 
-## 19. Known limitations
+## 20. Known limitations
 
 - An access token stays valid until it expires (up to 15 minutes) after logout.
 - Per-username lockout can be abused to lock a known account.
@@ -670,6 +760,8 @@ Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 - One Postgres instance hosts every database.
 - No PAN ever leaves the bank in this simulation; PANs are encrypted at rest in card-service.
 - Holds never expire.
+- The web CSP allows inline scripts (Next.js bootstrap); there is no nonce.
+- The web session timer runs on browser time; the shared clock does not move it.
 - A wallet transaction can briefly show without a merchant name when the clearing record
   is consumed before the authorization.
 - Consumers cannot read compressed Kafka batches (snappy, lz4, zstd need extra libraries).

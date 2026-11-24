@@ -50,7 +50,6 @@ jobs:
       - name: Shell scripts parse
         run: for f in scripts/*.sh; do bash -n "$f"; done
 
-      # The web app arrives in phase 5; these steps run once app/web exists.
       - uses: actions/setup-node@v5
         if: hashFiles('app/web/package.json') != ''
         with:
@@ -63,7 +62,7 @@ jobs:
         run: |
           npm ci
           npx tsc --noEmit
-          npx eslint .
+          npx eslint . --max-warnings 0
 
   stack-smoke:
     runs-on: ubuntu-latest

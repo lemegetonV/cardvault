@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
+from mocks.wallet_operator.pages import router as pages_router
 from shared import clock, hmac_auth, http_client, seed_data
 from shared.errors import AppError, ErrorBody
 from shared.faults import FaultRegistry, FaultScope
@@ -555,9 +556,9 @@ app = create_app(
         description=(
             "A controllable stand-in for the wallet operator: accepts enrolment requests from "
             "the bank (202), gets tokens from the network, sends signed status callbacks, and "
-            "serves the daily enrolment file."
+            "serves the daily enrolment file, the embeddable terms page and the help page."
         ),
-        routers=[api, files, control_router],
+        routers=[api, files, pages_router, control_router],
         uses_db=False,
         uses_kafka=False,
         on_reset=[on_reset],

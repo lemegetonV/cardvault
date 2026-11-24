@@ -54,6 +54,11 @@ services:
     environment:
       LOG_LEVEL: INFO
 
+  web:
+    mem_limit: 256m
+    environment:
+      NODE_OPTIONS: --max-old-space-size=192
+
   network-mock:
     <<: *ci-python
     environment:

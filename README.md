@@ -10,9 +10,9 @@ It is an **application under test**: it exists so that API and UI test framework
 built against realistic behaviour (auth, idempotency, events, signed callbacks, failures,
 reconciliation) with test-only controls, deterministic seed data and observable state.
 
-> Build status: phase 4 of 6 (platform, auth-service, card-service, network-mock,
+> Build status: phase 5 of 6 (platform, auth-service, card-service, network-mock,
 > profile-service, enrollment-service with reconciliation, wallet-operator-mock,
-> wallet-txn-service, CI).
+> wallet-txn-service, web app, CI).
 > See `SPEC.md` section 13.
 
 ## Quick start
@@ -27,12 +27,13 @@ make smoke   # end-to-end smoke test
 
 | URL | What |
 |---|---|
+| http://localhost:3000 | Web app (sign in as `alice`) |
 | http://localhost:8001/docs | auth-service OpenAPI |
 | http://localhost:8002/docs | card-service OpenAPI |
 | http://localhost:8003/docs | enrollment-service OpenAPI (wallet) |
 | http://localhost:8004/docs | wallet-txn-service OpenAPI (transactions, export, disputes) |
 | http://localhost:8005/docs | profile-service OpenAPI |
-| http://localhost:8101/docs | wallet-operator-mock OpenAPI |
+| http://localhost:8101/docs | wallet-operator-mock OpenAPI (`/embed/terms`, `/help`) |
 | http://localhost:8102/docs | network-mock OpenAPI |
 | http://localhost:8080 | Redpanda Console |
 | `127.0.0.1:19092` | Kafka (Redpanda) from the host |

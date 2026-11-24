@@ -146,3 +146,14 @@ A `from`/`to` that is not a date or a datetime with an offset, `from` after `to`
 | `ENROLLMENT_REMOVED` | 422 | Update, suspend or resume on a removed record |
 | `OPERATOR_UNAVAILABLE` | 5xx | The `error` control fired (nothing was applied) |
 | `OPERATOR_TIMEOUT` | 504 | The `timeout` control fired, after hanging (nothing was applied) |
+
+## web (BFF)
+
+Service errors pass through unchanged. The BFF adds these:
+
+| error_code | HTTP | When |
+|---|---|---|
+| `CSRF_FAILED` | 403 | A POST, PATCH or DELETE without `X-CSRF-Token` equal to the `cv_csrf` cookie |
+| `UNAUTHORIZED` | 401 | No session cookie (the page then goes to `/login?reason=expired`) |
+| `UPSTREAM_UNAVAILABLE` | 502 | The service could not be reached |
+| `NOT_FOUND` | 404 | An `/api/...` path that maps to no service |

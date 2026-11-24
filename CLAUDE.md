@@ -11,6 +11,8 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 ## Rules that are easy to forget
 - Fictional and generic only: no real bank, wallet, network or operator names or flows.
 - Default behaviour is always correct; bugs exist only behind `BUG_*` flags.
+- Web dependencies are the spec's stack only (next, react, react-dom, typescript, eslint +
+  eslint-config-next, @types/*, @eslint/eslintrc for the flat config); no UI/CSS libraries.
 - Ask before adding any dependency not in the spec. Approved extras: uvicorn, asyncpg,
   PyJWT, cryptography, httpx, python-multipart (dispute uploads). (Not approved:
   python-snappy, so Kafka messages must be uncompressed; `rpk topic produce` needs `-z none`.)
@@ -26,7 +28,7 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - [x] 2. card-service + network-mock
 - [x] 3. profile-service + enrollment-service + wallet-operator-mock
 - [x] 4. wallet-txn-service + every Kafka flow + DLQs + reconciliation
-- [ ] 5. web app + the 10 Playwright coverage features + operator embed/help pages
+- [x] 5. web app + the 10 Playwright coverage features + operator embed/help pages
 - [ ] 6. Seeded bugs + full docs
 
 ## Layout
@@ -40,7 +42,8 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - `scripts/lib.sh`: the `SERVICES` list (add each new service here; order is the reset and
   seed order, and the operator mock must stay after enrollment), `req`/`json` helpers.
 - `scripts/smoke.sh` resets and reseeds first, then runs; per-phase parts are sourced
-  (`smoke-cards.sh`, reseed, `smoke-wallet.sh`, reseed, `smoke-txns.sh`). Callback- and
+  (`smoke-cards.sh`, reseed, `smoke-wallet.sh`, reseed, `smoke-txns.sh`, `smoke-web.sh`;
+  the web part is HTTP only, browser behaviour is the owner's Playwright suite). Callback- and
   event-driven statuses are polled with `wait_until`, never slept for.
 - `app/shared/seed_data.py`: seed cards, enrolments and tokens shared by all services/mocks.
   `app/shared/seed_txns.py`: the 58 seed wallet transactions; card-service derives each
@@ -53,6 +56,13 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
   trace_id (upsert, status recomputed by `derive_status`); `disputes.py` is the multipart
   upload (passes `fingerprint_body` to `idempotency.run`). Reconciliation is
   `services/enrollment/recon.py` (pure `compare()`).
+- `app/web`: Next.js App Router, no UI framework. `src/app/api/[...path]/route.ts` is the BFF
+  proxy (path prefix -> service), `src/app/api/auth/*` the session routes, `src/middleware.ts`
+  CSP + CSRF cookie + login redirect, `src/components/` shared UI (consent iframe, dialog,
+  shell with session timer, toasts), `src/lib/client/` fetch helper, formatting, types.
+  Pages are client components; keep `data-testid` on everything interactive or asserted.
+  Never use `dangerouslySetInnerHTML` (ESLint fails). `npm run typecheck`, `npm run lint`.
+  Build the image with the same `--secret id=build_ca` flags (context `app/web`, no SERVICE).
 - `OutboxRelay(kinds=[...])` limits a relay to some row kinds; a deliver function raises
   `PermanentDeliveryError` to give up at once.
 
