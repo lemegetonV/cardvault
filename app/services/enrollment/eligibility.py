@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from shared import bugs
+
 RECENT_USE = timedelta(days=90)
 SUPPORTED_PRODUCTS = frozenset({"CREDIT", "DEBIT"})
 
@@ -77,7 +79,8 @@ def evaluate(
         return Eligibility(False, "CARD_EXPIRED")
     if card.product not in SUPPORTED_PRODUCTS:
         return Eligibility(False, "PRODUCT_NOT_SUPPORTED")
-    if card.last_used_at is None or now - card.last_used_at > RECENT_USE:
+    recent = card.last_used_at is not None and now - card.last_used_at <= RECENT_USE
+    if not recent and not bugs.enabled("BUG_INELIGIBLE_CARD_ENROLLED"):
         return Eligibility(False, "NOT_RECENTLY_USED")
     if opted_out:
         return Eligibility(False, "CUSTOMER_OPTED_OUT")

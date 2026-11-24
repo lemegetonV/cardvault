@@ -7,7 +7,7 @@ import { formatExpiry, label } from "@/lib/client/format";
 import type { Wallet, WalletCard } from "@/lib/client/types";
 import { ConsentDialog } from "@/components/consent";
 import { Dialog } from "@/components/dialog";
-import { useConfig, useToast } from "@/components/providers";
+import { useBug, useConfig, useToast } from "@/components/providers";
 import { Badge, Empty, ErrorState, Loading } from "@/components/states";
 
 // Spec 16.8 rule 54: poll a PENDING card every 2 s, give up after 60 s.
@@ -19,6 +19,7 @@ type Consent = { kind: "opt-in" } | { kind: "add"; card: WalletCard };
 
 export default function WalletPage() {
   const { operatorUrl } = useConfig();
+  const neverRefresh = useBug("BUG_UI_PENDING_NEVER_REFRESHES"); // seeded bug: no polling
   const toast = useToast();
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +53,7 @@ export default function WalletPage() {
     .map((c) => c.card_id)
     .join(",");
   useEffect(() => {
-    if (!pendingIds) return;
+    if (!pendingIds || neverRefresh) return;
     const ids = pendingIds.split(",");
     const now = Date.now();
     for (const id of ids) pollStart.current[id] ??= now;
@@ -70,7 +71,7 @@ export default function WalletPage() {
       }
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [pendingIds, replaceCard]);
+  }, [pendingIds, replaceCard, neverRefresh]);
 
   const startPolling = (cardId: string) => {
     pollStart.current[cardId] = Date.now();

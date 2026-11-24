@@ -31,7 +31,7 @@ from services.enrollment.models import (
     reconciliation_runs,
 )
 from services.enrollment.operator_client import OPERATOR_URL, SECRET, TIMEOUT
-from shared import clock, hmac_auth, http_client
+from shared import bugs, clock, hmac_auth, http_client
 from shared.errors import AppError, ErrorBody
 from shared.security import require_service
 
@@ -108,7 +108,9 @@ def compare(sor: list, file_rows: list[dict[str, str]]) -> tuple[list[Finding], 
                 findings.append(Finding(type="MISSING_AT_OPERATOR", details={}, **base))
             continue
         if op.get("status") != e.status:
-            findings.append(Finding(type="STATUS_MISMATCH", details={}, **base))
+            # Seeded bug: status differences are not reported (nor compared further).
+            if not bugs.enabled("BUG_RECON_MISSES_STATUS_MISMATCH"):
+                findings.append(Finding(type="STATUS_MISMATCH", details={}, **base))
             continue
         if e.status in ACTIVE:
             diff = {

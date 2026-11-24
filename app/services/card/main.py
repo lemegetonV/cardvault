@@ -67,6 +67,7 @@ async def apply_enrollment(session, payload: events.EnrollmentChangedPayload) ->
 
 async def startup(runtime: Runtime) -> None:
     s = get_settings()
+    domain.direct_producer = runtime.producer
     runtime.relays.append(
         OutboxRelay(
             runtime.db, outbox, {"event": kafka_event_handler(runtime.producer, s.event_backoff)}

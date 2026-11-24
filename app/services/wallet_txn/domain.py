@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
 from services.wallet_txn.models import wallet_transactions
-from shared import events
+from shared import bugs, events
 
 DISPUTABLE = ("AUTHORIZED", "SETTLED", "PARTIALLY_REVERSED", "PARTIALLY_REFUNDED")
 
@@ -143,6 +143,17 @@ async def apply_auth(session, p: events.AuthDecidedPayload, now: datetime) -> bo
 async def apply_clearing(session, p: events.TxnClearedPayload, now: datetime) -> bool:
     if p.token_requestor != "WALLET":
         return False
+    if bugs.enabled("BUG_CLEARED_BEFORE_AUTH_LOST"):
+        # Seeded bug: a clearing that arrives before its auth.decided is dropped.
+        exists = (
+            await session.execute(
+                sa.select(wallet_transactions.c.txn_id).where(
+                    wallet_transactions.c.trace_id == p.trace_id
+                )
+            )
+        ).first()
+        if exists is None:
+            return False
     row = await _lock_or_create(
         session,
         trace_id=p.trace_id,

@@ -24,7 +24,7 @@ from services.wallet_txn.api import (
 )
 from services.wallet_txn.domain import DISPUTABLE
 from services.wallet_txn.models import disputes, idempotency_keys
-from shared import clock, idempotency
+from shared import bugs, clock, idempotency
 from shared.errors import AppError
 from shared.security import Customer, require_customer
 
@@ -37,6 +37,14 @@ SIGNATURES = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
 )
+
+
+BY_EXTENSION = {
+    "pdf": "application/pdf",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+}
 
 
 def sniff(data: bytes) -> str | None:
@@ -61,6 +69,9 @@ async def _read_receipt(receipt: UploadFile | None) -> tuple[bytes, str, str] | 
             {"max_bytes": MAX_RECEIPT_BYTES},
         )
     content_type = sniff(data)
+    if bugs.enabled("BUG_DISPUTE_FILE_TYPE_BY_NAME"):
+        # Seeded bug: trusts the file name, so a renamed file of any content is accepted.
+        content_type = BY_EXTENSION.get((receipt.filename or "").rsplit(".", 1)[-1].lower())
     if content_type is None:
         raise AppError(
             422,

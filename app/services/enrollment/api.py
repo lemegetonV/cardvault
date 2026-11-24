@@ -32,7 +32,7 @@ from services.enrollment.models import (
     wallet_card_prefs,
     wallet_prefs,
 )
-from shared import clock, idempotency
+from shared import bugs, clock, idempotency
 from shared.errors import AppError, ErrorBody
 from shared.security import Customer, require_customer
 
@@ -217,6 +217,9 @@ async def opt_out(request: Request, customer: Customer = Depends(require_custome
                         .with_for_update()
                     )
                 ).all()
+                if bugs.enabled("BUG_OPT_OUT_PARTIAL") and len(rows) > 1:
+                    # Seeded bug: the last card (by card_id) stays enrolled.
+                    rows = sorted(rows, key=lambda r: str(r.card_id))[:-1]
                 for enr in rows:
                     await domain.remove_now(s, enr, reason="CUSTOMER_OPTED_OUT", source="CUSTOMER")
             wallet = await wallet_view(s, customer.customer_id)

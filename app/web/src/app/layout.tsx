@@ -11,13 +11,19 @@ export const metadata: Metadata = {
   description: "CardVault Bank: cards and the checkout wallet (a simulation)",
 };
 
+// Seeded UI bugs (all off by default): the BUG_UI_* flags that are "true" at run time.
+const uiBugs = () =>
+  Object.keys(process.env).filter(
+    (k) => k.startsWith("BUG_UI_") && process.env[k]?.toLowerCase() === "true",
+  );
+
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <Providers config={{ operatorUrl: operatorPublicUrl }}>{children}</Providers>
+        <Providers config={{ operatorUrl: operatorPublicUrl, bugs: uiBugs() }}>{children}</Providers>
       </body>
     </html>
   );

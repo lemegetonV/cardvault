@@ -5,8 +5,9 @@ application under test: every decision below favours production-like behaviour a
 testability over features. This file records each decision and its tradeoff. It grows with
 each build phase; sections for later phases are marked as such.
 
-Status: **phase 5** (platform, auth-service, card-service, network-mock, profile-service,
-enrollment-service with reconciliation, wallet-operator-mock, wallet-txn-service, web app, CI).
+Status: **phase 6, complete** (platform, auth-service, card-service, network-mock,
+profile-service, enrollment-service with reconciliation, wallet-operator-mock,
+wallet-txn-service, web app, CI, seeded bugs).
 
 ## 1. Services and responsibilities
 
@@ -25,6 +26,35 @@ enrollment-service with reconciliation, wallet-operator-mock, wallet-txn-service
 | console | 8080 | Redpanda Console (local only, not in CI) | 1 |
 
 Port 8006 is reserved for the future agent service.
+
+### Service map
+
+Solid arrows are synchronous HTTP; dotted arrows are Kafka topics (producer to consumer).
+Every event and every call to the operator leaves through the sender's outbox.
+
+```mermaid
+flowchart LR
+  browser([Browser]) --> web[web: Next.js UI + BFF]
+  web --> auth[auth-service]
+  web --> card[card-service]
+  web --> enr[enrollment-service]
+  web --> wtx[wallet-txn-service]
+  web --> prof[profile-service]
+  browser -. terms iframe .-> op
+  net[network-mock] -- authorizations, clearing --> card
+  enr -- enrol / suspend / resume / update / remove, HMAC --> op[wallet-operator-mock]
+  op -- callbacks, HMAC --> enr
+  enr -- daily file, HMAC --> op
+  card -. card.lifecycle .-> enr
+  prof -. contact.updated .-> enr
+  enr -. enrollment.changed .-> card
+  card -. auth.decided, txn.cleared .-> wtx
+  auth & card & enr & wtx & prof --- pg[(Postgres: one database per service)]
+  card & enr & wtx & prof --- rp[(Redpanda)]
+```
+
+Services check customer tokens themselves against auth-service's JWKS, so the BFF forwards
+the access token and holds no business logic.
 
 ## 2. Repository and build
 
@@ -480,6 +510,38 @@ copy directly, so the token works as soon as the call returns.
 cancels the operator's scheduled callbacks after enrollment has stopped pushing, and a late
 callback can never land on freshly seeded rows.
 
+### Enrolment sequence
+
+Adding one card (spec 11 step 2). The customer sees PENDING at once and ENROLLED when the
+operator's callback lands; the web page polls every 2 seconds.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor C as Customer
+  participant W as web (BFF)
+  participant E as enrollment-service
+  participant O as wallet-operator-mock
+  participant K as Redpanda
+  participant CS as card-service
+  C->>W: Add card, accept terms (iframe postMessage)
+  W->>E: POST /v1/wallet/cards/{card_id} {terms_version}
+  E->>E: eligibility (card projection, verified contact, 90-day use)
+  E->>E: one transaction: enrolment PENDING + outbox row (operator ENROL)
+  E-->>W: 202 PENDING
+  E->>O: relay: POST /v1/enrollments (HMAC signed)
+  O-->>E: 202 accepted
+  Note over O: callback after OPERATOR_CALLBACK_DELAY_MS
+  O->>E: POST /v1/callbacks/operator {status ENROLLED, token_ref, operator_version}
+  E->>E: verify signature and timestamp, dedupe event_id, reject stale versions
+  E->>E: one transaction: ENROLLED + history + outbox enrollment.changed
+  E-->>O: 200 APPLIED
+  E->>K: relay: enrollment.changed
+  K->>CS: wallet token mapping and status (used by authorizations)
+  W->>E: poll GET /v1/wallet/cards/{card_id}
+  E-->>W: ENROLLED
+```
+
 ## 13. wallet-operator-mock (phase 3)
 
 A controllable wallet operator with state in memory. Each request from the bank is
@@ -504,6 +566,32 @@ reconciliation reads. `GET /embed/terms` and `GET /help` are the embeddable page
 
 The wallet transaction system of record. It owns no money: card-service holds the balance
 and the holds; this service keeps the customer-facing record of each wallet purchase.
+
+### Purchase sequence
+
+A wallet purchase from authorization to settlement (spec 11 step 3). Each event folds into
+one row per `trace_id`, in whichever order the two events arrive.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant N as network-mock
+  participant CS as card-service
+  participant K as Redpanda
+  participant T as wallet-txn-service
+  actor C as Customer (web)
+  N->>CS: POST /internal/v1/authorizations {trace_id, token_ref, amount}
+  CS->>CS: token ENROLLED and mapped? card active? amount within available?
+  CS->>CS: one transaction: authorization + hold + available - amount + outbox auth.decided
+  CS-->>N: APPROVED (a repeated trace_id gets the stored decision)
+  CS->>K: relay: auth.decided
+  K->>T: upsert by trace_id, status AUTHORIZED
+  N->>CS: POST /internal/v1/clearing {SETTLE, amount}
+  CS->>CS: one transaction: hold SETTLED, available + hold - cleared, outbox txn.cleared
+  CS->>K: relay: txn.cleared
+  K->>T: fold amounts, status SETTLED (derived from the amounts)
+  C->>T: GET /v1/wallet/transactions (through the BFF)
+```
 
 ### Building the record from events
 
@@ -708,7 +796,20 @@ and path, or topic) and made deterministic with `fail_next: N` or `rate` plus `s
 Seeded bugs are environment flags, all `false` by default. `make bug-up BUG=<FLAG>` (or the
 start-stack action's `bug_flag` input) turns exactly one on. The flag list lives in
 `shared/bugs.py` and `scripts/bugs.txt`; CI checks they agree. `GET /test/bugs` shows which
-flags a service sees. Bug behaviour is implemented in phase 6.
+flags a service sees.
+
+Each bug is a guarded branch at the exact point where the correct code runs, written as
+`if bugs.enabled("BUG_X"): <wrong behaviour>` next to the right one, so reading the
+correct path shows where its bug lives. `bugs.enabled` reads the environment on each call
+and refuses an unknown flag name, so a typo fails loudly instead of silently testing
+nothing. The web container gets the same flags; the root layout reads the `BUG_UI_*` ones
+at request time and hands them to the client components through the config context, so
+the same image serves every flag. Defaults are always correct: every flag is `false` unless
+`make bug-up` sets exactly one.
+
+*Tradeoff:* the bug code ships in the image next to the correct code, which a real product
+would never do; the gain is one image per service for every scenario, and a test can flip
+a scenario with one environment variable instead of a rebuild.
 
 ## 18. Continuous integration and resource budget
 
@@ -774,4 +875,3 @@ Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
   there is no email or SMS channel in this simulation.
 - A failed suspend, resume, update or remove push (5 attempts, or an operator 4xx) leaves
   the status unchanged with a `failure_reason`; the next event or the sweep pushes it again.
-- Reconciliation with the operator's daily file arrives in phase 4.

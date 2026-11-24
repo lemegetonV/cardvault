@@ -29,7 +29,7 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - [x] 3. profile-service + enrollment-service + wallet-operator-mock
 - [x] 4. wallet-txn-service + every Kafka flow + DLQs + reconciliation
 - [x] 5. web app + the 10 Playwright coverage features + operator embed/help pages
-- [ ] 6. Seeded bugs + full docs
+- [x] 6. Seeded bugs + full docs (the AUT is complete; next is the owner's test work)
 
 ## Layout
 - `app/pyproject.toml`, `app/uv.lock`: one Python project for every service and mock.
@@ -61,8 +61,14 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
   CSP + CSRF cookie + login redirect, `src/components/` shared UI (consent iframe, dialog,
   shell with session timer, toasts), `src/lib/client/` fetch helper, formatting, types.
   Pages are client components; keep `data-testid` on everything interactive or asserted.
-  Never use `dangerouslySetInnerHTML` (ESLint fails). `npm run typecheck`, `npm run lint`.
+  Never use `dangerouslySetInnerHTML` (ESLint fails); the one exception is the seeded bug
+  in `components/merchant.tsx`. `npm run typecheck`, `npm run lint`.
   Build the image with the same `--secret id=build_ca` flags (context `app/web`, no SERVICE).
+- Seeded bugs: `if bugs.enabled("BUG_X"):` right where the correct code runs (Python), or
+  `useBug("BUG_UI_X")` from `components/providers.tsx` (web; the root layout passes the
+  `BUG_UI_*` env flags in the config). A new flag goes in `shared/bugs.py`, `scripts/bugs.txt`
+  and the `x-bug-flags` anchor in `docker-compose.yml`, plus a curl repro in
+  `docs/private/BUGS.md`. When a flow changes, re-run the affected repros there.
 - `OutboxRelay(kinds=[...])` limits a relay to some row kinds; a deliver function raises
   `PermanentDeliveryError` to give up at once.
 

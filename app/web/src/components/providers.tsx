@@ -1,13 +1,16 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { setUtcTimes } from "@/lib/client/format";
 
 interface Config {
   operatorUrl: string;
+  bugs: string[]; // seeded BUG_UI_* flags that are on; empty by default
 }
 
-const ConfigContext = createContext<Config>({ operatorUrl: "http://localhost:8101" });
+const ConfigContext = createContext<Config>({ operatorUrl: "http://localhost:8101", bugs: [] });
 export const useConfig = () => useContext(ConfigContext);
+export const useBug = (flag: string) => useContext(ConfigContext).bugs.includes(flag);
 
 type ToastKind = "success" | "error";
 interface Toast {
@@ -29,6 +32,7 @@ export function Providers({ config, children }: { config: Config; children: Reac
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), TOAST_MS);
   }, []);
   const value = useMemo(() => config, [config]);
+  setUtcTimes(config.bugs.includes("BUG_UI_TIMEZONE_UTC"));
   return (
     <ConfigContext.Provider value={value}>
       <ToastContext.Provider value={push}>

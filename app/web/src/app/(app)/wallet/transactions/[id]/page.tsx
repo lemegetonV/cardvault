@@ -6,7 +6,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { call, errorMessage, newIdempotencyKey } from "@/lib/client/api";
 import { formatCents, formatDateTime, label } from "@/lib/client/format";
 import { DISPUTABLE, type Dispute, type Transaction } from "@/lib/client/types";
-import { useToast } from "@/components/providers";
+import { Merchant } from "@/components/merchant";
+import { useBug, useToast } from "@/components/providers";
 import { Badge, ErrorState, Loading } from "@/components/states";
 
 const REASONS = ["UNRECOGNISED", "DUPLICATE", "WRONG_AMOUNT", "NOT_RECEIVED"];
@@ -21,10 +22,12 @@ function DisputeForm({ txn, onOpened }: { txn: Transaction; onOpened: () => void
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const key = useRef(newIdempotencyKey()); // one key per form, so a retry replays
+  // Seeded bug: no busy guard and the button stays enabled, so a double click sends twice.
+  const doubleSubmit = useBug("BUG_UI_DOUBLE_SUBMIT");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (busy) return;
+    if (busy && !doubleSubmit) return;
     setBusy(true);
     setError(null);
     const form = new FormData();
@@ -35,7 +38,8 @@ function DisputeForm({ txn, onOpened }: { txn: Transaction; onOpened: () => void
     try {
       await call<Dispute>(`/api/wallet/transactions/${txn.txn_id}/disputes`, {
         form,
-        headers: { "idempotency-key": key.current },
+        // (the seeded bug also sends a new key each time, so the second request is a 409)
+        headers: { "idempotency-key": doubleSubmit ? newIdempotencyKey() : key.current },
       });
       toast("success", "Dispute opened");
       onOpened();
@@ -94,7 +98,7 @@ function DisputeForm({ txn, onOpened }: { txn: Transaction; onOpened: () => void
           {error}
         </p>
       )}
-      <button type="submit" className="btn btn-primary" disabled={busy} data-testid="dispute-submit">
+      <button type="submit" className="btn btn-primary" disabled={busy && !doubleSubmit} data-testid="dispute-submit">
         {busy ? "Sending…" : "Open dispute"}
       </button>
     </form>
@@ -132,10 +136,12 @@ export default function TransactionDetailPage() {
       ) : (
         <>
           <div className="row page-head">
-            {/* Untrusted text: rendered as text, React escapes it. */}
-            <h1 id="txn-detail-title" data-testid="txn-detail-merchant">
-              {txn.merchant_name ?? "Pending details"}
-            </h1>
+            <Merchant
+              as="h1"
+              id="txn-detail-title"
+              name={txn.merchant_name}
+              testId="txn-detail-merchant"
+            />
             <Badge value={txn.status} testId="txn-detail-status" />
             {txn.open_dispute_id && <Badge value="DISPUTE_OPEN" testId="dispute-open-badge" />}
           </div>

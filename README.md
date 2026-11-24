@@ -10,10 +10,26 @@ It is an **application under test**: it exists so that API and UI test framework
 built against realistic behaviour (auth, idempotency, events, signed callbacks, failures,
 reconciliation) with test-only controls, deterministic seed data and observable state.
 
-> Build status: phase 5 of 6 (platform, auth-service, card-service, network-mock,
-> profile-service, enrollment-service with reconciliation, wallet-operator-mock,
-> wallet-txn-service, web app, CI).
-> See `SPEC.md` section 13.
+> Build status: complete (all 6 phases in `SPEC.md` section 13). The test frameworks live in
+> `tests-api/` (pytest + httpx) and `tests-ui/` (Playwright); `evals/` is reserved for
+> agent evaluations.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  browser([Browser]) --> web[web: UI + BFF]
+  web --> svc[auth, card, enrollment, wallet-txn, profile services]
+  net[network-mock] --> svc
+  svc <--> op[wallet-operator-mock]
+  svc <-.-> rp[(Redpanda events)]
+  svc --- pg[(Postgres)]
+```
+
+The customer uses the web app; the network mock plays merchants and the card network; the
+operator mock plays the external wallet operator (signed requests both ways). Services talk
+to each other through Kafka events written with a transactional outbox. `ARCHITECTURE.md`
+has the full service map, the enrolment and purchase sequences, and every design decision.
 
 ## Quick start
 
@@ -91,7 +107,7 @@ curl -s localhost:8003/internal/v1/reconciliation/runs -H 'X-Service-Key: cv-svc
 | `smoke` | Run `scripts/smoke.sh` |
 | `logs` | Follow container logs |
 | `ci-up` | Start with `docker-compose.ci.yml` (CI limits), wait, seed |
-| `bug-up BUG=<FLAG>` | Start with exactly one seeded-bug flag on |
+| `bug-up BUG=<FLAG>` | Start with exactly one seeded-bug flag on (list: `scripts/bugs.txt`) |
 | `lint` / `format` / `events` | ruff checks / ruff fixes / regenerate `docs/events` |
 
 ## Test controls (TEST_MODE only, header `X-Test-Key`)
@@ -103,6 +119,14 @@ Every service: `POST /test/reset`, `POST /test/seed`, `GET|POST /test/faults`,
   enrolled), `GET /test/enrollments` (includes `token_ref`), and the daily sweep at
   `POST /internal/v1/sweep` (tests `X-Service-Key`).
 - Both mocks: `GET|POST /test/behaviour` (controls) and `GET|POST /test/state`.
+
+## Seeded bugs
+
+CardVault ships with known defects that test suites are meant to find. Each is behind one
+environment flag, off by default (with every flag off the app behaves as specified).
+`make bug-up BUG=BUG_PAN_IN_LOGS` rebuilds and starts the stack with just that flag on, and
+`GET /test/bugs` on any service shows what it sees. The flag names are in `scripts/bugs.txt`
+and `app/shared/bugs.py`; what each one breaks is for the tests to discover.
 
 ## Continuous integration
 

@@ -1,8 +1,16 @@
 "use client";
 
 // Spec 6.6 feature 9: every date and time in the browser's timezone, amounts as USD.
+let utcTimes = false; // seeded bug BUG_UI_TIMEZONE_UTC
+export function setUtcTimes(on: boolean): void {
+  utcTimes = on;
+}
 const dateTime = () =>
-  new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+  new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...(utcTimes ? { timeZone: "UTC" } : {}),
+  });
 const usd = () => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
 
 export function formatDateTime(iso: string | null | undefined): string {

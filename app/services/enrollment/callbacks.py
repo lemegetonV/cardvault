@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from services.enrollment import domain
 from services.enrollment.models import processed_callbacks
-from shared import clock, hmac_auth
+from shared import bugs, clock, hmac_auth
 from shared.errors import AppError, ErrorBody
 
 router = APIRouter(prefix="/v1/callbacks", tags=["callbacks"])
@@ -66,12 +66,15 @@ class CallbackAck(BaseModel):
 )
 async def operator_callback(request: Request) -> CallbackAck:
     raw = await request.body()
-    hmac_auth.verify(
-        SECRET,
-        request.headers.get(hmac_auth.TIMESTAMP_HEADER),
-        request.headers.get(hmac_auth.SIGNATURE_HEADER),
-        raw,
-    )
+    # Seeded bugs: the signature, or only the timestamp window, is not checked.
+    if not bugs.enabled("BUG_CALLBACK_SIGNATURE_IGNORED"):
+        hmac_auth.verify(
+            SECRET,
+            request.headers.get(hmac_auth.TIMESTAMP_HEADER),
+            request.headers.get(hmac_auth.SIGNATURE_HEADER),
+            raw,
+            check_timestamp=not bugs.enabled("BUG_CALLBACK_TIMESTAMP_NOT_CHECKED"),
+        )
     try:
         cb = OperatorCallback.model_validate_json(raw)
     except ValidationError as exc:
@@ -101,15 +104,20 @@ async def operator_callback(request: Request) -> CallbackAck:
             )
         ).first()
         if first is None:
-            return CallbackAck(
-                result="DUPLICATE", enrollment_id=enr.enrollment_id, status=enr.status
+            if not bugs.enabled("BUG_DUPLICATE_CALLBACK_APPLIED_TWICE"):
+                return CallbackAck(
+                    result="DUPLICATE", enrollment_id=enr.enrollment_id, status=enr.status
+                )
+            # Seeded bug: a redelivered callback writes history and publishes again.
+            await domain.record_change(s, enr, "CALLBACK", enr.status_reason)
+            result = domain.CallbackResult("APPLIED", enr)
+        else:
+            result = await domain.apply_callback(s, enr, cb)
+            await s.execute(
+                processed_callbacks.update()
+                .where(processed_callbacks.c.event_id == cb.event_id)
+                .values(outcome=result.outcome)
             )
-        result = await domain.apply_callback(s, enr, cb)
-        await s.execute(
-            processed_callbacks.update()
-            .where(processed_callbacks.c.event_id == cb.event_id)
-            .values(outcome=result.outcome)
-        )
     for relay in runtime.relays:
         relay.wake()
     return CallbackAck(

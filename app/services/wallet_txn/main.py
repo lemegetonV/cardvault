@@ -17,7 +17,7 @@ from services.wallet_txn.models import (
     processed_events,
     wallet_transactions,
 )
-from shared import clock, events, seed_txns
+from shared import bugs, clock, events, seed_txns
 from shared.errors import AppError
 from shared.kafka import Consumer
 from shared.runtime import Runtime, ServiceSpec, create_app
@@ -39,7 +39,8 @@ async def handle_event(runtime: Runtime, envelope: events.Envelope) -> None:
                 .returning(processed_events.c.event_id)
             )
         ).first()
-        if first is None:
+        # Seeded bug: redelivered events are applied again (amounts added twice).
+        if first is None and not bugs.enabled("BUG_TXN_DUPLICATE_ON_REDELIVERY"):
             return
         if envelope.event_type == events.AUTH_DECIDED:
             await domain.apply_auth(s, envelope.payload, now)

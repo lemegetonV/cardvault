@@ -263,6 +263,7 @@ services:
       context: ./app/web
     image: cardvault/web:local
     environment:
+      <<: *bug-flags
       AUTH_URL: http://auth:8001
       CARD_URL: http://card:8002
       ENROLLMENT_URL: http://enrollment:8003

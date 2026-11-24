@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { call, errorMessage } from "@/lib/client/api";
 import { formatCents, formatDateTime, label, localDayBound } from "@/lib/client/format";
 import { TXN_STATUSES, type Card, type Transaction } from "@/lib/client/types";
+import { Merchant } from "@/components/merchant";
 import { Badge, Empty, ErrorState, Loading } from "@/components/states";
 
 interface Filters {
@@ -255,10 +256,7 @@ function TransactionsView() {
                   className="txn-link"
                   data-testid={`txn-${t.txn_id}`}
                 >
-                  {/* Untrusted text: rendered as text, React escapes it. */}
-                  <span className="merchant" data-testid="txn-merchant">
-                    {t.merchant_name ?? "Pending details"}
-                  </span>
+                  <Merchant name={t.merchant_name} testId="txn-merchant" className="merchant" />
                   <span className="muted" data-testid="txn-time">
                     {formatDateTime(t.occurred_at)} · {cardName(t.card_id)}
                   </span>

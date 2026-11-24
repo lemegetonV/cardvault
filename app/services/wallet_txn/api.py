@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from services.wallet_txn.models import disputes, wallet_transactions
-from shared import pagination
+from shared import bugs, pagination
 from shared.errors import AppError, ErrorBody
 from shared.security import Customer, require_customer
 
@@ -147,7 +147,7 @@ def filters(
     )
 
 
-def _query(customer: Customer, f: Filters):
+def _query(customer: Customer, f: Filters, scoped: bool = True):
     t = wallet_transactions
     open_dispute = (
         sa.select(disputes.c.dispute_id)
@@ -155,9 +155,9 @@ def _query(customer: Customer, f: Filters):
         .limit(1)
         .scalar_subquery()
     )
-    q = sa.select(t, open_dispute.label("open_dispute_id")).where(
-        t.c.customer_id == customer.customer_id
-    )
+    q = sa.select(t, open_dispute.label("open_dispute_id"))
+    if scoped:
+        q = q.where(t.c.customer_id == customer.customer_id)
     if f.card_ids:
         q = q.where(t.c.card_id.in_(f.card_ids))
     if f.statuses:
@@ -262,6 +262,8 @@ def utc(value: datetime | None) -> str:
 
 def safe_cell(value: str) -> str:
     """Spec 16.6 rule 42: a cell a spreadsheet would run as a formula gets a leading '."""
+    if bugs.enabled("BUG_CSV_FORMULA_INJECTION"):
+        return value
     return "'" + value if value.startswith(_FORMULA_START) else value
 
 
@@ -330,11 +332,15 @@ async def get_transaction(
     customer: Customer = Depends(require_customer),
 ) -> TransactionView:
     async with _db(request).session() as s:
-        return view(await own_transaction(s, txn_id, customer))
+        # Seeded bug: the read is not scoped to the caller, so any txn_id is readable.
+        scoped = not bugs.enabled("BUG_CROSS_CUSTOMER_WALLET_READ")
+        return view(await own_transaction(s, txn_id, customer, scoped=scoped))
 
 
-async def own_transaction(session, txn_id: uuid.UUID, customer: Customer, lock: bool = False):
-    q = _query(customer, _NO_FILTERS).where(wallet_transactions.c.txn_id == txn_id)
+async def own_transaction(
+    session, txn_id: uuid.UUID, customer: Customer, lock: bool = False, scoped: bool = True
+):
+    q = _query(customer, _NO_FILTERS, scoped).where(wallet_transactions.c.txn_id == txn_id)
     row = (await session.execute(q)).first()
     if row is None:
         raise AppError(404, "TRANSACTION_NOT_FOUND", "Transaction not found")

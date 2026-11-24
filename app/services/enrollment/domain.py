@@ -34,7 +34,7 @@ from services.enrollment.models import (
     wallet_card_prefs,
     wallet_prefs,
 )
-from shared import clock, correlation, events
+from shared import bugs, clock, correlation, events
 from shared.outbox import enqueue, enqueue_event
 
 log = logging.getLogger(__name__)
@@ -121,6 +121,11 @@ async def check(
 
 async def _reload(s: AsyncSession, enrollment_id):
     return await get_enrollment(s, enrollment_id=enrollment_id)
+
+
+async def record_change(s: AsyncSession, enr, source: str, reason) -> None:
+    """History row plus enrollment.changed for the enrolment as it is now."""
+    await _changed(s, enr.status, enr, source, reason)
 
 
 async def _changed(s: AsyncSession, before_status: str | None, enr, source: str, reason) -> None:
@@ -309,6 +314,8 @@ async def reconcile_card(
                 return "REMOVE"
             return None
         if card.status == "LOST":
+            if bugs.enabled("BUG_SUSPEND_NOT_PUSHED"):
+                return None  # seeded bug: the operator keeps the lost card active
             if target in ("ENROLLED", "PENDING"):
                 await suspend(s, enr, reason="CARD_LOST")
                 return "SUSPEND"
@@ -322,7 +329,10 @@ async def reconcile_card(
         if target == "SUSPENDED":
             enr = await resume(s, enr)
             actions.append("RESUME")
-        if (enr.last4, enr.expiry) != (card.last4, card.expiry) and intent(enr) != "REMOVED":
+        changed = (enr.last4, enr.expiry) != (card.last4, card.expiry)
+        if changed and bugs.enabled("BUG_REISSUE_NOT_PUSHED"):
+            changed = False  # seeded bug: the operator keeps the old last4 and expiry
+        if changed and intent(enr) != "REMOVED":
             await update_card(s, enr, card)
             actions.append("UPDATE")
         return "+".join(actions) or None
@@ -359,6 +369,16 @@ async def apply_callback(s: AsyncSession, enr, cb) -> CallbackResult:
             extra={"enrollment_id": str(enr.enrollment_id), "callback_status": cb.status},
         )
         return CallbackResult("IGNORED_REMOVED", enr)
+    if cb.operator_version < enr.operator_version and bugs.enabled("BUG_STALE_CALLBACK_OVERWRITES"):
+        # Seeded bug: the stale callback's status is written over the newer one.
+        await s.execute(
+            enrollments.update()
+            .where(enrollments.c.enrollment_id == enr.enrollment_id)
+            .values(status=cb.status, operator_version=cb.operator_version, updated_at=clock.now())
+        )
+        updated = await _reload(s, enr.enrollment_id)
+        await _changed(s, enr.status, updated, "CALLBACK", "STALE_APPLIED")
+        return CallbackResult("APPLIED", updated)
     if cb.operator_version < enr.operator_version:
         log.info(
             "stale callback ignored",

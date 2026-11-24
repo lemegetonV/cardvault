@@ -32,7 +32,7 @@ from services.card.models import (
     processed_clearing,
     wallet_tokens,
 )
-from shared import clock, events
+from shared import bugs, clock, events
 from shared.errors import AppError, ErrorBody
 from shared.outbox import enqueue_event
 from shared.security import require_service
@@ -81,6 +81,17 @@ class AuthorizationResponse(BaseModel):
     decided_at: datetime
 
 
+def _money(*cents: int) -> int:
+    """Sum of integer cents. The BUG_FLOAT_MONEY seeded bug does it in float dollars and
+    truncates, so 30 - 10 cents becomes 19 (0.3 - 0.1 = 0.19999999999999998)."""
+    if bugs.enabled("BUG_FLOAT_MONEY"):
+        dollars = 0.0
+        for c in cents:  # a plain loop: sum() compensates float error since Python 3.12
+            dollars += c / 100
+        return int(dollars * 100)
+    return sum(cents)
+
+
 class _Duplicate(Exception):
     """Raised inside the transaction to roll it back when another request won the trace_id."""
 
@@ -112,7 +123,7 @@ async def _decide(session, card, body: AuthorizationRequest) -> str | None:
         ).first()
         if token is None or token.card_id != card.card_id:
             return "TOKEN_MISMATCH"
-        if token.status != "ENROLLED":
+        if token.status != "ENROLLED" and not bugs.enabled("BUG_TOKEN_STATUS_IGNORED"):
             return "TOKEN_INACTIVE"
     if body.amount > card.available_amount:
         return "INSUFFICIENT_FUNDS"
@@ -136,9 +147,11 @@ async def authorize(
     body: AuthorizationRequest, request: Request, _: str = Depends(service_auth)
 ) -> AuthorizationResponse:
     db = request.app.state.runtime.db
+    # Seeded bug: a repeated trace_id is decided again and takes a second hold.
+    not_idempotent = bugs.enabled("BUG_AUTH_NOT_IDEMPOTENT")
     async with db.session() as s:
         stored = await _stored_decision(s, body.trace_id)
-    if stored is not None:
+    if stored is not None and not not_idempotent:
         return AuthorizationResponse.model_validate(stored)
 
     try:
@@ -152,7 +165,7 @@ async def authorize(
                 raise AppError(404, "CARD_NOT_FOUND", "Card not found")
             # Another request with this trace_id may have finished while we waited.
             stored = await _stored_decision(s, body.trace_id)
-            if stored is not None:
+            if stored is not None and not not_idempotent:
                 return AuthorizationResponse.model_validate(stored)
 
             now = clock.now()
@@ -164,7 +177,9 @@ async def authorize(
                     holds.insert().values(
                         hold_id=hold_id,
                         card_id=card.card_id,
-                        trace_id=body.trace_id,
+                        trace_id=body.trace_id
+                        if stored is None
+                        else f"{body.trace_id}~{uuid.uuid4().hex[:8]}",
                         original_amount=body.amount,
                         amount=body.amount,
                         status="ACTIVE",
@@ -211,7 +226,7 @@ async def authorize(
                 .on_conflict_do_nothing()
                 .returning(authorizations.c.trace_id)
             )
-            if inserted.first() is None:
+            if inserted.first() is None and not not_idempotent:
                 raise _Duplicate  # same trace_id on another card won the race; roll back
 
             await enqueue_event(
@@ -351,8 +366,9 @@ async def clearing(
                     {"hold_amount": hold_amount, "amount": body.amount},
                 )
             # Release what is held, charge what cleared.
-            available = available + hold_amount - body.amount
-            hold_status, cleared, settled_at = "SETTLED", body.amount, now
+            cleared = a.amount if bugs.enabled("BUG_SETTLE_USES_AUTH_AMOUNT") else body.amount
+            available = _money(available, hold_amount, -cleared)
+            hold_status, settled_at = "SETTLED", now
         elif body.type == "REVERSE":
             if settled_at is not None:
                 raise AppError(409, "ALREADY_SETTLED", "Settled transactions are refunded")
@@ -365,11 +381,12 @@ async def clearing(
                     "Reversal is larger than the amount held",
                     {"hold_amount": hold_amount, "amount": body.amount},
                 )
-            hold_amount -= body.amount
-            available += body.amount
             reversed_ += body.amount
-            if hold_amount == 0:
-                hold_status = "RELEASED"
+            if not bugs.enabled("BUG_HOLD_NOT_RELEASED_ON_REVERSAL"):
+                hold_amount = _money(hold_amount, -body.amount)
+                available = _money(available, body.amount)
+                if hold_amount <= 0:
+                    hold_amount, hold_status = 0, "RELEASED"
         else:  # REFUND
             if settled_at is None:
                 raise AppError(409, "NOT_SETTLED", "Only a settled transaction can be refunded")

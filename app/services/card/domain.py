@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import secrets
 import uuid
@@ -14,8 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.card import pan as pan_crypto
 from services.card.models import cards, outbox
-from shared import clock, events, seed_data
+from shared import bugs, clock, events, seed_data
+from shared.kafka import Producer
 from shared.outbox import enqueue_event
+
+log = logging.getLogger(__name__)
+
+# Set at start-up; used only by the BUG_EVENT_PUBLISHED_WITHOUT_COMMIT seeded bug.
+direct_producer: Producer | None = None
 
 Product = Literal["CREDIT", "DEBIT", "PREPAID"]
 CardStatus = Literal["ACTIVE", "LOST", "CLOSED"]
@@ -81,13 +88,16 @@ async def lifecycle_event(session: AsyncSession, row, event: str) -> None:
         expiry=row.expiry,
         last_used_at=row.last_used_at,
     )
-    await enqueue_event(
-        session,
-        outbox,
-        events.CARD_LIFECYCLE,
-        str(row.card_id),
-        events.make(events.CARD_LIFECYCLE, payload),
-    )
+    envelope = events.make(events.CARD_LIFECYCLE, payload)
+    if bugs.enabled("BUG_EVENT_PUBLISHED_WITHOUT_COMMIT") and direct_producer is not None:
+        # Seeded bug: published straight to Kafka before the transaction commits, with no
+        # outbox row. A publish failure loses the event; a rollback publishes a lie.
+        try:
+            await direct_producer.send_envelope(events.CARD_LIFECYCLE, str(row.card_id), envelope)
+        except Exception as exc:
+            log.warning("card.lifecycle publish failed", extra={"error": str(exc)})
+        return
+    await enqueue_event(session, outbox, events.CARD_LIFECYCLE, str(row.card_id), envelope)
 
 
 async def create_card(

@@ -8,6 +8,7 @@ with the current state and publishes nothing (spec 16.1 rules 1 and 2).
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 import sqlalchemy as sa
@@ -18,10 +19,11 @@ from pydantic import BaseModel
 from services.card import domain
 from services.card import pan as pan_crypto
 from services.card.models import cards, idempotency_keys
-from shared import clock, idempotency, pagination
+from shared import bugs, clock, idempotency, pagination
 from shared.errors import AppError, ErrorBody
 from shared.security import Customer, require_customer
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/cards", tags=["cards"])
 
 CARD_ID = Path(description="The card's ID (UUID)")
@@ -144,6 +146,10 @@ async def _transition(request: Request, card_id: uuid.UUID, customer: Customer, 
                     )
                 )
                 events_to_send = ["CARD_ACTIVATED", "CARD_REISSUED"]
+                log.info("card reissued", extra={"card_id": str(card_id), "last4": pan[-4:]})
+                if bugs.enabled("BUG_PAN_IN_LOGS"):
+                    # Seeded bug: the full card number is logged, past the redaction.
+                    log.info("reissued card number", extra={"pan": pan, "_skip_redaction": True})
             updated = (await s.execute(sa.select(cards).where(cards.c.card_id == card_id))).one()
             for event in events_to_send:
                 await domain.lifecycle_event(s, updated, event)
