@@ -1,0 +1,44 @@
+[project]
+name = "cardvault-app"
+version = "0.1.0"
+description = "CardVault: the bank-side services and mocks (application under test)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.9",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    "aiokafka>=0.12",
+    "uvicorn>=0.32",
+    "pyjwt>=2.10",
+    "cryptography>=44",
+    "httpx>=0.28",
+    "python-multipart>=0.0.18",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.8"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "S", "SIM", "RUF"]
+ignore = [
+    "S101",   # assert is fine in invariants
+    "S104",   # services bind 0.0.0.0 inside their container on purpose
+    "S105",   # "token" field names are not passwords
+    "S106",
+    "S311",   # seeded RNGs are for deterministic test data, not crypto
+    "RUF012", # SQLAlchemy/Pydantic class attributes
+    "B008",   # FastAPI Depends() in defaults is the idiom
+    "UP046",  # Pydantic generics keep the explicit Generic[...] form
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/migrations/**" = ["E501"]

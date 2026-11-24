@@ -1,0 +1,120 @@
+name: app-ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: app-ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: app/uv.lock
+
+      - name: Install Python deps
+        working-directory: app
+        run: uv sync --frozen
+
+      - name: ruff check
+        working-directory: app
+        run: uv run ruff check --output-format github .
+
+      - name: ruff format --check
+        working-directory: app
+        run: uv run ruff format --check .
+
+      - name: Event schemas are up to date
+        working-directory: app
+        run: |
+          uv run python -m shared.events.export ../docs/events
+          git diff --exit-code -- ../docs/events
+
+      - name: Bug flag lists agree
+        working-directory: app
+        run: |
+          uv run python -c "from shared.bugs import KNOWN; print('\n'.join(KNOWN))" > /tmp/bugs.txt
+          diff /tmp/bugs.txt ../scripts/bugs.txt
+
+      - name: Shell scripts parse
+        run: for f in scripts/*.sh; do bash -n "$f"; done
+
+      - uses: actions/setup-node@v5
+        if: hashFiles('app/web/package.json') != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/web/package-lock.json
+      - name: tsc + ESLint (web)
+        if: hashFiles('app/web/package.json') != ''
+        working-directory: app/web
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx eslint . --max-warnings 0
+
+  stack-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Start stack
+        id: stack
+        uses: ./.github/actions/start-stack
+
+      - name: Smoke
+        run: make smoke
+
+      - name: Resource usage
+        if: always()
+        run: |
+          mkdir -p artifacts
+          docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' | tee artifacts/docker-stats.txt
+          total=$(docker stats --no-stream --format '{{.MemUsage}}' | awk '{print $1}' | python3 -c '
+          import sys
+          units = {"KiB": 1/1024, "MiB": 1, "GiB": 1024, "B": 1/1048576}
+          total = 0
+          for line in sys.stdin:
+              v = line.strip()
+              for u in ("KiB", "MiB", "GiB", "B"):
+                  if v.endswith(u):
+                      total += float(v[: -len(u)]) * units[u]
+                      break
+          print(round(total))')
+          {
+            echo "### Resource usage after smoke"
+            echo "Containers total: ${total} MiB. Startup: ${{ steps.stack.outputs.startup_seconds }}s."
+            echo '```'
+            cat artifacts/docker-stats.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color --timestamps > artifacts/compose-logs.txt 2>&1 || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: stack-smoke-evidence
+          path: artifacts/
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v

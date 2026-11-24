@@ -1,0 +1,323 @@
+# CardVault: the whole stack. `make up` starts it; `make ci-up` adds docker-compose.ci.yml.
+# Variables come from .env (copied from .env.example by `make up`).
+name: cardvault
+
+x-bug-flags: &bug-flags
+  # Seeded bugs: all false unless `make bug-up BUG=<FLAG>` sets exactly one.
+  BUG_INELIGIBLE_CARD_ENROLLED: ${BUG_INELIGIBLE_CARD_ENROLLED:-false}
+  BUG_SUSPEND_NOT_PUSHED: ${BUG_SUSPEND_NOT_PUSHED:-false}
+  BUG_REISSUE_NOT_PUSHED: ${BUG_REISSUE_NOT_PUSHED:-false}
+  BUG_OPT_OUT_PARTIAL: ${BUG_OPT_OUT_PARTIAL:-false}
+  BUG_CALLBACK_SIGNATURE_IGNORED: ${BUG_CALLBACK_SIGNATURE_IGNORED:-false}
+  BUG_CALLBACK_TIMESTAMP_NOT_CHECKED: ${BUG_CALLBACK_TIMESTAMP_NOT_CHECKED:-false}
+  BUG_STALE_CALLBACK_OVERWRITES: ${BUG_STALE_CALLBACK_OVERWRITES:-false}
+  BUG_DUPLICATE_CALLBACK_APPLIED_TWICE: ${BUG_DUPLICATE_CALLBACK_APPLIED_TWICE:-false}
+  BUG_AUTH_NOT_IDEMPOTENT: ${BUG_AUTH_NOT_IDEMPOTENT:-false}
+  BUG_TOKEN_STATUS_IGNORED: ${BUG_TOKEN_STATUS_IGNORED:-false}
+  BUG_HOLD_NOT_RELEASED_ON_REVERSAL: ${BUG_HOLD_NOT_RELEASED_ON_REVERSAL:-false}
+  BUG_SETTLE_USES_AUTH_AMOUNT: ${BUG_SETTLE_USES_AUTH_AMOUNT:-false}
+  BUG_FLOAT_MONEY: ${BUG_FLOAT_MONEY:-false}
+  BUG_EVENT_PUBLISHED_WITHOUT_COMMIT: ${BUG_EVENT_PUBLISHED_WITHOUT_COMMIT:-false}
+  BUG_TXN_DUPLICATE_ON_REDELIVERY: ${BUG_TXN_DUPLICATE_ON_REDELIVERY:-false}
+  BUG_CLEARED_BEFORE_AUTH_LOST: ${BUG_CLEARED_BEFORE_AUTH_LOST:-false}
+  BUG_CSV_FORMULA_INJECTION: ${BUG_CSV_FORMULA_INJECTION:-false}
+  BUG_RECON_MISSES_STATUS_MISMATCH: ${BUG_RECON_MISSES_STATUS_MISMATCH:-false}
+  BUG_CROSS_CUSTOMER_WALLET_READ: ${BUG_CROSS_CUSTOMER_WALLET_READ:-false}
+  BUG_PAN_IN_LOGS: ${BUG_PAN_IN_LOGS:-false}
+  BUG_IDEMPOTENCY_KEY_NOT_SCOPED: ${BUG_IDEMPOTENCY_KEY_NOT_SCOPED:-false}
+  BUG_UI_UNESCAPED_MERCHANT: ${BUG_UI_UNESCAPED_MERCHANT:-false}
+  BUG_UI_PENDING_NEVER_REFRESHES: ${BUG_UI_PENDING_NEVER_REFRESHES:-false}
+  BUG_UI_DOUBLE_SUBMIT: ${BUG_UI_DOUBLE_SUBMIT:-false}
+  BUG_UI_TIMEZONE_UTC: ${BUG_UI_TIMEZONE_UTC:-false}
+  BUG_DISPUTE_FILE_TYPE_BY_NAME: ${BUG_DISPUTE_FILE_TYPE_BY_NAME:-false}
+
+x-python-env: &python-env
+  <<: *bug-flags
+  TEST_MODE: ${TEST_MODE:-true}
+  TEST_KEY: ${TEST_KEY}
+  LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+  KAFKA_BOOTSTRAP: redpanda:9092
+  TESTSUPPORT_DATABASE_URL: postgresql+asyncpg://testsupport_svc:${TESTSUPPORT_DB_PASSWORD}@postgres:5432/testsupport
+  JWT_ISSUER: ${JWT_ISSUER:-cardvault-auth}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-cardvault}
+  AUTH_JWKS_URL: http://auth:8001/.well-known/jwks.json
+  SERVICE_KEY_NETWORK_MOCK: ${SERVICE_KEY_NETWORK_MOCK}
+  SERVICE_KEY_OPERATOR_MOCK: ${SERVICE_KEY_OPERATOR_MOCK}
+  SERVICE_KEY_TESTS: ${SERVICE_KEY_TESTS}
+
+x-python-healthcheck: &python-healthcheck
+  interval: 3s
+  timeout: 3s
+  retries: 30
+  start_period: 5s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD}
+      CARD_DB_PASSWORD: ${CARD_DB_PASSWORD}
+      ENROLLMENT_DB_PASSWORD: ${ENROLLMENT_DB_PASSWORD}
+      WALLET_TXN_DB_PASSWORD: ${WALLET_TXN_DB_PASSWORD}
+      PROFILE_DB_PASSWORD: ${PROFILE_DB_PASSWORD}
+      TESTSUPPORT_DB_PASSWORD: ${TESTSUPPORT_DB_PASSWORD}
+      READONLY_DB_PASSWORD: ${READONLY_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./app/infra/postgres:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # Checks the last database the init script creates, so "healthy" means init finished.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d testsupport && psql -U postgres -d testsupport -tAc 'SELECT 1 FROM clock_offset' | grep -q 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://127.0.0.1:19092
+      - --rpc-addr=redpanda:33145
+      - --advertise-rpc-addr=redpanda:33145
+    ports:
+      - "127.0.0.1:19092:19092"
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.2
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  auth:
+    build:
+      context: ./app
+      args:
+        SERVICE: auth
+    image: cardvault/auth:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: auth
+      PORT: "8001"
+      DATABASE_URL: postgresql+asyncpg://auth_svc:${AUTH_DB_PASSWORD}@postgres:5432/auth
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8001/ready', timeout=2)"]
+    restart: unless-stopped
+
+  card:
+    build:
+      context: ./app
+      args:
+        SERVICE: card
+    image: cardvault/card:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: card
+      PORT: "8002"
+      DATABASE_URL: postgresql+asyncpg://card_svc:${CARD_DB_PASSWORD}@postgres:5432/card
+      CARD_PAN_KEY: ${CARD_PAN_KEY}
+    ports:
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8002/ready', timeout=2)"]
+    restart: unless-stopped
+
+  profile:
+    build:
+      context: ./app
+      args:
+        SERVICE: profile
+    image: cardvault/profile:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: profile
+      PORT: "8005"
+      DATABASE_URL: postgresql+asyncpg://profile_svc:${PROFILE_DB_PASSWORD}@postgres:5432/profile
+    ports:
+      - "127.0.0.1:8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8005/ready', timeout=2)"]
+    restart: unless-stopped
+
+  enrollment:
+    build:
+      context: ./app
+      args:
+        SERVICE: enrollment
+    image: cardvault/enrollment:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: enrollment
+      PORT: "8003"
+      DATABASE_URL: postgresql+asyncpg://enrollment_svc:${ENROLLMENT_DB_PASSWORD}@postgres:5432/enrollment
+      OPERATOR_INTERNAL_URL: http://wallet-operator-mock:8101
+      OPERATOR_HMAC_SECRET: ${OPERATOR_HMAC_SECRET}
+      AUTH_URL: http://auth:8001
+      CARD_URL: http://card:8002
+      PROFILE_URL: http://profile:8005
+      NETWORK_URL: http://network-mock:8102
+    ports:
+      - "127.0.0.1:8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8003/ready', timeout=2)"]
+    restart: unless-stopped
+
+  network-mock:
+    build:
+      context: ./app
+      args:
+        SERVICE: network
+    image: cardvault/network-mock:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: network-mock
+      PORT: "8102"
+      CARD_URL: http://card:8002
+    ports:
+      - "127.0.0.1:8102:8102"
+    depends_on:
+      card:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8102/ready', timeout=2)"]
+    restart: unless-stopped
+
+  wallet-txn:
+    build:
+      context: ./app
+      args:
+        SERVICE: wallet_txn
+    image: cardvault/wallet-txn:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: wallet-txn
+      PORT: "8004"
+      DATABASE_URL: postgresql+asyncpg://wallet_txn_svc:${WALLET_TXN_DB_PASSWORD}@postgres:5432/wallet_txn
+    ports:
+      - "127.0.0.1:8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8004/ready', timeout=2)"]
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./app/web
+    image: cardvault/web:local
+    environment:
+      <<: *bug-flags
+      AUTH_URL: http://auth:8001
+      CARD_URL: http://card:8002
+      ENROLLMENT_URL: http://enrollment:8003
+      WALLET_TXN_URL: http://wallet-txn:8004
+      PROFILE_URL: http://profile:8005
+      OPERATOR_PUBLIC_URL: ${OPERATOR_PUBLIC_URL:-http://localhost:8101}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      auth:
+        condition: service_healthy
+      card:
+        condition: service_healthy
+      enrollment:
+        condition: service_healthy
+      wallet-txn:
+        condition: service_healthy
+      profile:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  wallet-operator-mock:
+    build:
+      context: ./app
+      args:
+        SERVICE: wallet_operator
+    image: cardvault/wallet-operator-mock:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: wallet-operator-mock
+      PORT: "8101"
+      BANK_CALLBACK_URL: http://enrollment:8003/v1/callbacks/operator
+      NETWORK_URL: http://network-mock:8102
+      OPERATOR_HMAC_SECRET: ${OPERATOR_HMAC_SECRET}
+      OPERATOR_CALLBACK_DELAY_MS: ${OPERATOR_CALLBACK_DELAY_MS:-2000}
+      OPERATOR_PUBLIC_URL: ${OPERATOR_PUBLIC_URL:-http://localhost:8101}
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    ports:
+      - "127.0.0.1:8101:8101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8101/ready', timeout=2)"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redpanda:
