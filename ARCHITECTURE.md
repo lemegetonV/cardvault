@@ -740,6 +740,7 @@ to `127.0.0.1` in the base file already, so the override does not need to change
 | 4 | Cloud dev container, 4 CPUs (CI override) | 22 s | ~900 MiB (redpanda 242, auth 101, postgres 97, wallet-txn 79, enrollment 78, operator-mock 78, network-mock 77, card 74, profile 73) |
 | 4 | GitHub-hosted runner, 2 vCPU (app-ci run 45366433574) | 35 s | ~903 MiB (redpanda 245, auth 103, postgres 88, enrollment 88, wallet-txn 79, operator-mock 77, network-mock 77, card 75, profile 72) |
 | 5 | Cloud dev container, 4 CPUs (CI override) | 21 s | ~967 MiB (redpanda 241, auth 103, postgres 97, profile 83, wallet-txn 79, enrollment 78, operator-mock 78, network-mock 77, card 75, web 56) |
+| 5 | GitHub-hosted runner, 2 vCPU (app-ci run 45369724396) | 37 s | ~935 MiB (redpanda 242, auth 103, postgres 88, wallet-txn 79, enrollment 78, operator-mock 77, network-mock 76, card 75, profile 72, web 45) |
 
 Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 
