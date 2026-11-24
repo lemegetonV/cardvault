@@ -14,8 +14,8 @@ from sqlalchemy.dialects.postgresql import insert
 from services.card import domain
 from services.card.api import router as customer_router
 from services.card.internal import router as internal_router
-from services.card.models import RESET_TABLES, cards, outbox, wallet_tokens
-from shared import clock, events, seed_data
+from services.card.models import RESET_TABLES, authorizations, cards, holds, outbox, wallet_tokens
+from shared import clock, events, seed_data, seed_txns
 from shared.kafka import Consumer
 from shared.outbox import OutboxRelay, kafka_event_handler
 from shared.runtime import Runtime, ServiceSpec, create_app
@@ -102,7 +102,7 @@ async def seed(runtime: Runtime) -> None:
                 product=card.product,
                 status=card.status,
                 limit=card.limit,
-                available=card.available,
+                available=seed_txns.available(card),
                 expiry=card.expiry,
                 last_used_at=None
                 if card.used_days_ago is None
@@ -121,8 +121,66 @@ async def seed(runtime: Runtime) -> None:
                         updated_at=now,
                     )
                 )
+        for t in seed_txns.TXNS:
+            await _seed_authorization(s, t, now)
     for relay in runtime.relays:
         relay.wake()
+
+
+async def _seed_authorization(s, t: seed_txns.SeedTxn, now) -> None:
+    """The authorization and hold behind one seed transaction, already cleared.
+
+    Written directly (no events): wallet-txn-service seeds its own records from the same
+    module, so nothing needs to flow through Kafka for the seed.
+    """
+    decided_at = t.occurred_at(now)
+    hold_id = None
+    if t.decision == "APPROVED":
+        hold_id = uuid.uuid5(t.txn_id, "hold")
+        await s.execute(
+            holds.insert().values(
+                hold_id=hold_id,
+                card_id=t.card.card_id,
+                trace_id=t.trace_id,
+                original_amount=t.amount,
+                amount=t.hold_amount,
+                status=t.hold_status,
+                created_at=decided_at,
+                updated_at=decided_at,
+            )
+        )
+    response = {
+        "trace_id": t.trace_id,
+        "card_id": str(t.card.card_id),
+        "decision": t.decision,
+        "decline_code": t.decline_code,
+        "amount": t.amount,
+        "currency": "USD",
+        "hold_id": str(hold_id) if hold_id else None,
+        "decided_at": decided_at.isoformat(),
+    }
+    await s.execute(
+        authorizations.insert().values(
+            trace_id=t.trace_id,
+            card_id=t.card.card_id,
+            customer_id=t.card.customer_id,
+            token_ref=t.token_ref,
+            token_requestor="WALLET",
+            amount=t.amount,
+            currency="USD",
+            merchant_name=t.merchant_name,
+            mcc=t.mcc,
+            decision=t.decision,
+            decline_code=t.decline_code,
+            hold_id=hold_id,
+            cleared_amount=t.cleared,
+            reversed_amount=t.reversed,
+            refunded_amount=t.refunded,
+            settled_at=t.settled_at(now),
+            decided_at=decided_at,
+            response=response,
+        )
+    )
 
 
 # ---- Test support (TEST_MODE only) ----------------------------------------------------

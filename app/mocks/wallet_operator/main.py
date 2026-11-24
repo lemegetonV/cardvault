@@ -415,11 +415,12 @@ FILE_COLUMNS = (
     "/enrollments/{file_date}",
     summary="Daily enrolment file (CSV)",
     description="Every enrolment record the operator holds, one row each, as of the request. "
-    "Used by the bank's reconciliation.",
+    "Used by the bank's reconciliation. HMAC-signed like every bank request (empty body).",
     response_class=Response,
-    responses={200: {"content": {"text/csv": {}}}},
+    responses={200: {"content": {"text/csv": {}}}, 401: {"model": ErrorBody}},
 )
-async def enrollment_file(file_date: date) -> Response:
+async def enrollment_file(request: Request, file_date: date) -> Response:
+    await _authenticate(request)
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
     writer.writerow(FILE_COLUMNS)

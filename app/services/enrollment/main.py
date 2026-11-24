@@ -29,6 +29,7 @@ from services.enrollment.models import (
     processed_events,
     wallet_prefs,
 )
+from services.enrollment.recon import router as recon_router
 from shared import clock, events, http_client, seed_data
 from shared.errors import AppError
 from shared.kafka import Consumer
@@ -561,7 +562,7 @@ app = create_app(
             "callbacks), reactions to card and contact changes, and the customer's wallet "
             "choices (opt-out, opt-in, add and remove a card)."
         ),
-        routers=[wallet_router, callback_router],
+        routers=[wallet_router, callback_router, recon_router],
         test_routers=[test_router, internal_router],
         uses_db=True,
         uses_kafka=True,

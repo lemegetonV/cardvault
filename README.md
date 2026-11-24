@@ -10,8 +10,9 @@ It is an **application under test**: it exists so that API and UI test framework
 built against realistic behaviour (auth, idempotency, events, signed callbacks, failures,
 reconciliation) with test-only controls, deterministic seed data and observable state.
 
-> Build status: phase 3 of 6 (platform, auth-service, card-service, network-mock,
-> profile-service, enrollment-service, wallet-operator-mock, CI).
+> Build status: phase 4 of 6 (platform, auth-service, card-service, network-mock,
+> profile-service, enrollment-service with reconciliation, wallet-operator-mock,
+> wallet-txn-service, CI).
 > See `SPEC.md` section 13.
 
 ## Quick start
@@ -29,6 +30,7 @@ make smoke   # end-to-end smoke test
 | http://localhost:8001/docs | auth-service OpenAPI |
 | http://localhost:8002/docs | card-service OpenAPI |
 | http://localhost:8003/docs | enrollment-service OpenAPI (wallet) |
+| http://localhost:8004/docs | wallet-txn-service OpenAPI (transactions, export, disputes) |
 | http://localhost:8005/docs | profile-service OpenAPI |
 | http://localhost:8101/docs | wallet-operator-mock OpenAPI |
 | http://localhost:8102/docs | network-mock OpenAPI |
@@ -64,6 +66,19 @@ curl -s -X POST localhost:8002/v1/cards/ca4d0000-a11c-4000-8000-000000000001/rep
   -H "Authorization: Bearer $TOKEN"
 sleep 3; curl -s localhost:8003/v1/wallet/cards/ca4d0000-a11c-4000-8000-000000000001 \
   -H "Authorization: Bearer $TOKEN"
+```
+
+List alice's wallet transactions (the purchase above appears within a second), export them,
+dispute one, and run reconciliation against the operator's daily file:
+
+```bash
+curl -s "localhost:8004/v1/wallet/transactions?status=SETTLED&limit=5" -H "Authorization: Bearer $TOKEN"
+curl -s "localhost:8004/v1/wallet/transactions/export?from=2026-11-01&to=2026-11-30" \
+  -H "Authorization: Bearer $TOKEN" -OJ
+curl -s localhost:8004/v1/wallet/transactions/<txn_id>/disputes -H "Authorization: Bearer $TOKEN" \
+  -F reason=WRONG_AMOUNT -F note='Charged twice' -F receipt=@receipt.png
+curl -s localhost:8003/internal/v1/reconciliation/runs -H 'X-Service-Key: cv-svc-tests-local' \
+  -H 'content-type: application/json' -d '{}'
 ```
 
 ## Make targets

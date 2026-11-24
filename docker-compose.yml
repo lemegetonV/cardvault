@@ -233,6 +233,31 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8102/ready', timeout=2)"]
     restart: unless-stopped
 
+  wallet-txn:
+    build:
+      context: ./app
+      args:
+        SERVICE: wallet_txn
+    image: cardvault/wallet-txn:local
+    environment:
+      <<: *python-env
+      SERVICE_NAME: wallet-txn
+      PORT: "8004"
+      DATABASE_URL: postgresql+asyncpg://wallet_txn_svc:${WALLET_TXN_DB_PASSWORD}@postgres:5432/wallet_txn
+    ports:
+      - "127.0.0.1:8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8004/ready', timeout=2)"]
+    restart: unless-stopped
+
   wallet-operator-mock:
     build:
       context: ./app

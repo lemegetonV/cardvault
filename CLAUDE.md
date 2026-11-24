@@ -12,7 +12,8 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - Fictional and generic only: no real bank, wallet, network or operator names or flows.
 - Default behaviour is always correct; bugs exist only behind `BUG_*` flags.
 - Ask before adding any dependency not in the spec. Approved extras: uvicorn, asyncpg,
-  PyJWT, cryptography, httpx. (Not approved: python-snappy, so Kafka messages must be uncompressed.)
+  PyJWT, cryptography, httpx, python-multipart (dispute uploads). (Not approved:
+  python-snappy, so Kafka messages must be uncompressed; `rpk topic produce` needs `-z none`.)
 - Business time comes only from `shared.clock.now()`; retries and delays use real time.
 - Every event and every operator call goes through the outbox.
 - Money is integer cents. Never log PANs or tokens (the log formatter masks them anyway).
@@ -24,7 +25,7 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - [x] 1. Monorepo, compose + CI override, `shared`, auth-service, Makefile, smoke, start-stack action, app-ci
 - [x] 2. card-service + network-mock
 - [x] 3. profile-service + enrollment-service + wallet-operator-mock
-- [ ] 4. wallet-txn-service + every Kafka flow + DLQs + reconciliation
+- [x] 4. wallet-txn-service + every Kafka flow + DLQs + reconciliation
 - [ ] 5. web app + the 10 Playwright coverage features + operator embed/help pages
 - [ ] 6. Seeded bugs + full docs
 
@@ -39,13 +40,19 @@ Never write test frameworks; `scripts/smoke.sh` is the only test code.
 - `scripts/lib.sh`: the `SERVICES` list (add each new service here; order is the reset and
   seed order, and the operator mock must stay after enrollment), `req`/`json` helpers.
 - `scripts/smoke.sh` resets and reseeds first, then runs; per-phase parts are sourced
-  (`smoke-cards.sh`, then a reseed, then `smoke-wallet.sh`). Callback-driven statuses are
-  polled with `wait_until`, never slept for.
+  (`smoke-cards.sh`, reseed, `smoke-wallet.sh`, reseed, `smoke-txns.sh`). Callback- and
+  event-driven statuses are polled with `wait_until`, never slept for.
 - `app/shared/seed_data.py`: seed cards, enrolments and tokens shared by all services/mocks.
+  `app/shared/seed_txns.py`: the 58 seed wallet transactions; card-service derives each
+  card's `available` from them (`seed_txns.available(card)`), so never hardcode balances.
 - `app/mocks/<name>/main.py`: mocks use `create_app` too (`uses_db=False`, state in memory).
 - enrollment-service: `domain.py` holds the state machine (pushes, `intent()`, callbacks,
   reactions); `eligibility.py` is the pure eligibility function; `operator_client.py`
   delivers `kind=operator` outbox rows. Seed cards have fixed `last4`s in `seed_data.LAST4`.
+- wallet-txn-service: `domain.py` folds `auth.decided`/`txn.cleared` into one row per
+  trace_id (upsert, status recomputed by `derive_status`); `disputes.py` is the multipart
+  upload (passes `fingerprint_body` to `idempotency.run`). Reconciliation is
+  `services/enrollment/recon.py` (pure `compare()`).
 - `OutboxRelay(kinds=[...])` limits a relay to some row kinds; a deliver function raises
   `PermanentDeliveryError` to give up at once.
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from shared.idempotency import idempotency_table
 from shared.outbox import outbox_table
@@ -115,6 +115,37 @@ contact_projection = sa.Table(
     sa.Column("updated_at", TS, nullable=False),
 )
 
+# Reconciliation against the operator's daily enrolment file (spec 6.3).
+reconciliation_runs = sa.Table(
+    "reconciliation_runs",
+    metadata,
+    sa.Column("run_id", UUID(as_uuid=True), primary_key=True),
+    sa.Column("file_date", sa.Date, nullable=False),
+    sa.Column("status", sa.String(16), nullable=False),  # COMPLETED | FAILED
+    sa.Column("sor_records", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("file_records", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("skipped_in_flight", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("finding_count", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("error", sa.Text),
+    sa.Column("started_at", TS, nullable=False),
+    sa.Column("finished_at", TS),
+)
+
+reconciliation_findings = sa.Table(
+    "reconciliation_findings",
+    metadata,
+    sa.Column("finding_id", sa.BigInteger, sa.Identity(), primary_key=True),
+    sa.Column("run_id", UUID(as_uuid=True), nullable=False, index=True),
+    # MISSING_AT_OPERATOR | MISSING_IN_SOR | STATUS_MISMATCH | DATA_MISMATCH
+    sa.Column("type", sa.String(24), nullable=False),
+    sa.Column("enrollment_id", UUID(as_uuid=True)),
+    sa.Column("card_id", UUID(as_uuid=True)),
+    sa.Column("operator_ref", sa.String(64)),
+    sa.Column("sor_status", sa.String(16)),
+    sa.Column("operator_status", sa.String(16)),
+    sa.Column("details", JSONB, nullable=False),
+)
+
 outbox = outbox_table(metadata)
 idempotency_keys = idempotency_table(metadata)
 
@@ -129,4 +160,6 @@ RESET_TABLES = [
     "contact_projection",
     "outbox",
     "idempotency_keys",
+    "reconciliation_runs",
+    "reconciliation_findings",
 ]

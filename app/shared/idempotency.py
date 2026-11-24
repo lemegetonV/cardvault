@@ -69,8 +69,13 @@ async def run(
     request: Request,
     caller: str,
     handler: Handler,
+    fingerprint_body: bytes | None = None,
 ) -> Response:
-    """Run ``handler`` (which returns ``(status, body)``) under the request's key, if any."""
+    """Run ``handler`` (which returns ``(status, body)``) under the request's key, if any.
+
+    ``fingerprint_body`` replaces the raw body in the fingerprint. Multipart requests need
+    it: the boundary is random, so a client's retry never has the same raw bytes.
+    """
     key = request.headers.get(HEADER)
     if not key:
         status, body = await handler()
@@ -83,7 +88,7 @@ async def run(
     # Seeded bug hook (phase 6): without the caller in the scope, keys leak across callers.
     scope_owner = "" if bugs.enabled("BUG_IDEMPOTENCY_KEY_NOT_SCOPED") else caller
     scope = f"{scope_owner}|{request.method} {template}"
-    raw = await request.body()
+    raw = fingerprint_body if fingerprint_body is not None else await request.body()
     fingerprint = hashlib.sha256(
         request.method.encode() + b" " + request.url.path.encode() + b"\n" + raw
     ).hexdigest()

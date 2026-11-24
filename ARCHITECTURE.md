@@ -5,8 +5,8 @@ application under test: every decision below favours production-like behaviour a
 testability over features. This file records each decision and its tradeoff. It grows with
 each build phase; sections for later phases are marked as such.
 
-Status: **phase 3** (platform, auth-service, card-service, network-mock, profile-service,
-enrollment-service, wallet-operator-mock, CI).
+Status: **phase 4** (platform, auth-service, card-service, network-mock, profile-service,
+enrollment-service with reconciliation, wallet-operator-mock, wallet-txn-service, CI).
 
 ## 1. Services and responsibilities
 
@@ -320,6 +320,10 @@ between leaves the key IN_PROGRESS; after 60 s it is treated as abandoned and th
 request runs again. That is safe here because the guarded actions are themselves idempotent
 by state (repeating report-lost is a no-op).
 
+**Multipart requests** (the dispute upload) pass their own fingerprint: the form fields plus
+the receipt's SHA-256. The raw body cannot be used because the multipart boundary is random,
+so a client's honest retry would never match and would get 422 instead of the replay.
+
 **Pagination** (`shared/pagination.py`): newest first, ties broken by id, default 20, maximum
 100, opaque base64 cursor of the last item's `(created_at, id)`, keyset query (no OFFSET, so
 pages stay stable while rows are added). A bad cursor is 400 `INVALID_CURSOR`.
@@ -491,11 +495,121 @@ Controls (`/test/behaviour`): `callback_delay`, `error` and `timeout` (nothing a
 `duplicate_callback`, `out_of_order_callback` (the previous callback is re-sent after the new
 one, with a new `event_id`), `bad_signature`, `drop_callback` and `decline_enrollment`
 (a FAILED callback with a reason). `GET|POST /test/state` shows the records and recent
-callbacks and lets tests change records directly, to create reconciliation findings later.
-`GET /v1/files/enrollments/{date}` is the daily enrolment file (CSV) reconciliation will
-read in phase 4. The embeddable terms and help pages come in phase 5.
+callbacks and lets tests change records directly, to create reconciliation findings.
+`GET /v1/files/enrollments/{date}` is the daily enrolment file (CSV, HMAC-signed GET) that
+reconciliation reads. The embeddable terms and help pages come in phase 5.
 
-## 14. Fault injection and seeded bugs
+## 14. wallet-txn-service (phase 4)
+
+The wallet transaction system of record. It owns no money: card-service holds the balance
+and the holds; this service keeps the customer-facing record of each wallet purchase.
+
+### Building the record from events
+
+One row per `trace_id`, built by one consumer group on `auth.decided` and `txn.cleared`.
+Only wallet purchases count (`token_requestor = WALLET`); plain card purchases are ignored.
+Each event is deduplicated by inserting its `event_id` into `processed_events` in the same
+transaction as the change, so a redelivered event changes nothing.
+
+Both topics are keyed by `card_id`, but they are separate topics, so the clearing record can
+be consumed before the authorization. Every event therefore **upserts**: the first event for
+a trace creates the row (the authorization-only columns such as `merchant_name` and the
+authorized amount stay null until `auth.decided` arrives), then the event's amounts are
+applied and the status is **recomputed from the amounts**. `occurred_at` is the
+authorization time once known, so a late `auth.decided` moves the row to its real place in
+the list. *Tradeoff:* for a moment a transaction can show without a merchant name; the API
+documents `merchant_name` as nullable for that reason, instead of hiding the row (which
+would make a settled purchase disappear from the customer's list).
+
+### Status rules (spec 16.1 rule 6)
+
+Derived from the amounts in `services/wallet_txn/domain.py`, never from the order events
+arrived in. The first matching rule wins:
+
+| Status | Condition |
+|---|---|
+| `DECLINED` | the authorization was declined |
+| `REVERSED` | not settled, and reversed amount >= authorized amount |
+| `PARTIALLY_REVERSED` | not settled, and 0 < reversed amount (also while the authorization is not known yet) |
+| `REFUNDED` | refunded amount = cleared amount > 0 |
+| `PARTIALLY_REFUNDED` | 0 < refunded amount < cleared amount |
+| `SETTLED` | settled |
+| `AUTHORIZED` | otherwise |
+
+A settled transaction keeps its `reversed_amount` (the 10 + 20 cent seed transaction is
+authorized for 30, reversed by 10 and settled at 20) but its status follows the settlement.
+
+### Customer API
+
+`GET /v1/wallet/transactions` with repeatable `card_id` and `status`, `from`, `to`, `cursor`
+and `limit`: newest first by `(occurred_at, txn_id)`, keyset pagination like every list.
+`from` and `to` are inclusive (rule 55). Each takes a datetime **with an offset** (the UI
+sends the UTC start of the local `from` day and the end of the local `to` day) or a plain
+date, meaning that whole UTC day. A datetime without an offset is 422, because guessing a
+timezone is exactly the bug the UI timezone tests look for.
+`GET /v1/wallet/transactions/{id}` includes `open_dispute_id`. Another customer's
+transaction is 404 (section 5).
+
+**CSV export** (`/v1/wallet/transactions/export`, same filters, no paging, at most 10,000
+rows). Columns: `txn_id, occurred_at_utc, card_id, merchant_name, mcc, status,
+decline_code, amount, cleared_amount, reversed_amount, refunded_amount, currency,
+settled_at_utc`. Amounts are formatted from integer cents with `divmod` (never floats), times
+are UTC with `Z`. Any cell starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`
+(rule 42). The filename is `wallet-transactions-<from>-<to>.csv`, using the UTC date of each
+bound and `all` for an omitted one. *Tradeoff:* the export is built in memory; 10,000 rows
+is far beyond any seeded customer, and streaming would complicate the formula escaping for
+no test value.
+
+### Disputes
+
+`POST /v1/wallet/transactions/{id}/disputes` (multipart: `reason`, optional `note` up to 500
+characters, optional `receipt`). The receipt's type comes from its first bytes (`%PDF-`, the
+PNG signature, `FF D8 FF`), never from its name or the client's Content-Type, so a PNG named
+`receipt.pdf` is stored as `image/png` (rule 63). At most 5,242,880 bytes, inclusive; the
+upload is read with a limit of one byte more, so an oversized file is never held whole.
+Disputable statuses: AUTHORIZED, SETTLED, PARTIALLY_REVERSED, PARTIALLY_REFUNDED; anything
+else is 422 `TRANSACTION_NOT_DISPUTABLE`. A partial unique index (`txn_id WHERE status =
+'OPEN'`) enforces one open dispute per transaction, so two concurrent requests cannot both
+succeed: the loser gets 409 `DISPUTE_ALREADY_OPEN`. Receipts are stored in `bytea` and only
+their metadata is ever returned. *Tradeoff:* `bytea` keeps the record in one transaction
+and one backup; at real volumes receipts would go to object storage.
+
+### Seed
+
+`shared/seed_txns.py` defines the 58 seed transactions (55 for alice, 46 of them on her
+recent credit card, every status; 3 for bob) once. card-service writes the matching
+authorizations and holds and derives each card's `available` from them, wallet-txn-service
+writes the records and the one open dispute, and network-mock learns the trace IDs so tests
+can settle, reverse or refund seeded authorizations (rule 47). The special merchant names
+(prompt injection, HTML/script, a spreadsheet formula) and the 10 + 20 cent transaction are
+there for the security and money tests.
+
+## 15. Reconciliation (phase 4)
+
+`POST /internal/v1/reconciliation/runs {file_date}` (tests key) fetches the operator's daily
+enrolment file with an HMAC-signed GET and compares it with the `enrollments` table. The
+comparison (`services/enrollment/recon.py:compare`) is a pure function. The run and its
+findings are stored (`reconciliation_runs`, `reconciliation_findings`) and returned;
+`GET /internal/v1/reconciliation/runs/{id}` reads one back.
+
+| Finding | Condition |
+|---|---|
+| `MISSING_AT_OPERATOR` | ENROLLED or SUSPENDED in the SOR, not in the file |
+| `MISSING_IN_SOR` | in the file, unknown to the SOR |
+| `STATUS_MISMATCH` | both have it, with different statuses |
+| `DATA_MISMATCH` | same active status, but `last4` or `expiry` differ (`details` shows both values) |
+
+Enrolments **in flight** (PENDING, or with a push still waiting for its callback) are skipped
+and counted in `skipped_in_flight`. *Tradeoff:* a record stuck in flight is never reported
+by reconciliation; the alternative, reporting every in-flight record, would make every run
+taken during normal traffic noisy. A REMOVED or FAILED enrolment absent from the file is not
+a finding, since the operator may purge removed records.
+
+If the file cannot be fetched the run is stored as FAILED and the call returns 502
+`OPERATOR_FILE_UNAVAILABLE` with the `run_id`, so a failed run is still visible afterwards.
+The business date defaults to today on the shared clock (rule 43).
+
+## 16. Fault injection and seeded bugs
 
 `POST /test/faults` replaces the active set: `latency`, `error` (5xx), `timeout`,
 `kafka_publish_failure`, `consumer_pause`, `relay_pause`. Each fault can be scoped (method
@@ -507,7 +621,7 @@ start-stack action's `bug_flag` input) turns exactly one on. The flag list lives
 `shared/bugs.py` and `scripts/bugs.txt`; CI checks they agree. `GET /test/bugs` shows which
 flags a service sees. Bug behaviour is implemented in phase 6.
 
-## 15. Continuous integration and resource budget
+## 17. Continuous integration and resource budget
 
 Nothing is hosted. `app-ci.yml` runs on every push and pull request:
 
@@ -534,10 +648,11 @@ to `127.0.0.1` in the base file already, so the override does not need to change
 | 2 | GitHub-hosted runner, 4 vCPU (app-ci run 45206985835) | 33 s | ~529 MiB (redpanda 244, auth 87, network-mock 75, card 73, postgres 50) |
 | 3 | Cloud dev container, 4 CPUs (CI override) | 21 s | ~790 MiB (redpanda 242, auth 87, postgres 83, operator-mock 78, enrollment 78, network-mock 76, card 74, profile 72) |
 | 3 | GitHub-hosted runner, 2 vCPU (app-ci run 45279230900) | 38 s | ~809 MiB (redpanda 250, auth 103, enrollment 77, operator-mock 77, postgres 76, network-mock 76, profile 76, card 74) |
+| 4 | Cloud dev container, 4 CPUs (CI override) | 22 s | ~900 MiB (redpanda 242, auth 101, postgres 97, wallet-txn 79, enrollment 78, operator-mock 78, network-mock 77, card 74, profile 73) |
 
 Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 
-## 16. Agent-ready rules (spec 15.1)
+## 18. Agent-ready rules (spec 15.1)
 
 - Customer actions an agent will need are customer APIs that accept the customer's JWT.
 - Destructive actions (report lost, close, remove a card from the wallet, opt out) are
@@ -546,7 +661,7 @@ Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 - Correlation IDs flow through every hop.
 - Port 8006 and `evals/` are reserved.
 
-## 17. Known limitations
+## 19. Known limitations
 
 - An access token stays valid until it expires (up to 15 minutes) after logout.
 - Per-username lockout can be abused to lock a known account.
@@ -554,6 +669,8 @@ Targets: under 3 minutes on 2 vCPU and under 5 GB with tests running.
 - One Postgres instance hosts every database.
 - No PAN ever leaves the bank in this simulation; PANs are encrypted at rest in card-service.
 - Holds never expire.
+- A wallet transaction can briefly show without a merchant name when the clearing record
+  is consumed before the authorization.
 - Consumers cannot read compressed Kafka batches (snappy, lz4, zstd need extra libraries).
   Our producers do not compress; a tool such as `rpk topic produce` needs `-z none`.
 - network-mock and wallet-operator-mock keep their state in memory.

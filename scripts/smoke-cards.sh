@@ -58,12 +58,14 @@ expect_eq "$(json decline_code)" "TOKEN_MISMATCH" "another card's token is TOKEN
 svc_req POST "$CARD/internal/v1/authorizations" "${AUTH_BODY/\"amount\":100/\"amount\":0}"
 expect_status 422 "amount 0 is a validation error"
 
-section "Purchase, duplicate trace_id, clearing (alice credit, 5000.00 limit)"
+section "Purchase, duplicate trace_id, clearing (alice credit)"
+BASE="$(available_of $ALICE_CREDIT)"  # limit minus the seeded transactions
+expect_eq "$BASE" 137974 "seeded transactions are reflected in available (1379.74)"
 purchase "$TOK_ALICE_CREDIT" 2500 -H "X-Correlation-ID: smoke-purchase-1"
 expect_status 200 "wallet purchase of 25.00"
 expect_eq "$(json decision)" "APPROVED" "approved"
 TRACE1="$(json trace_id)"
-expect_eq "$(available_of $ALICE_CREDIT)" 497500 "available is 4975.00"
+expect_eq "$(available_of $ALICE_CREDIT)" "$((BASE - 2500))" "available drops by 25.00"
 
 net_req POST "$NET/test/behaviour" '{"controls":[{"type":"duplicate_authorization","fail_next":1}]}'
 expect_status 200 "network will resend the next authorization"
@@ -71,24 +73,24 @@ purchase "$TOK_ALICE_CREDIT" 1000
 expect_status 200 "purchase of 10.00 sent twice with one trace_id"
 TRACE2="$(json trace_id)"
 expect_eq "$(json duplicate_response.hold_id)" "$(json hold_id)" "the duplicate returns the same decision and hold"
-expect_eq "$(available_of $ALICE_CREDIT)" 496500 "only one hold was taken (4965.00)"
+expect_eq "$(available_of $ALICE_CREDIT)" "$((BASE - 3500))" "only one hold was taken (35.00 held in total)"
 
 net_req POST "$NET/v1/test/purchases/$TRACE1/settle" '{"amount":2000}'
 expect_status 200 "settle the 25.00 purchase at 20.00"
 expect_eq "$(json hold_status)" "SETTLED" "hold is SETTLED"
-expect_eq "$(available_of $ALICE_CREDIT)" 497000 "available corrected to the cleared amount (4970.00)"
+expect_eq "$(available_of $ALICE_CREDIT)" "$((BASE - 3000))" "available corrected to the cleared amount"
 net_req POST "$NET/v1/test/purchases/$TRACE1/settle" '{"amount":2000}'
 expect_status 409 "a second SETTLE is rejected"
 net_req POST "$NET/v1/test/purchases/$TRACE1/refund" '{"amount":500}'
 expect_status 200 "refund 5.00"
-expect_eq "$(available_of $ALICE_CREDIT)" 497500 "refund credits available (4975.00)"
+expect_eq "$(available_of $ALICE_CREDIT)" "$((BASE - 2500))" "refund credits available"
 net_req POST "$NET/v1/test/purchases/$TRACE1/refund" '{"amount":2000}'
 expect_status 422 "refund above what is left is rejected"
 expect_eq "$(json error_code)" "REFUND_EXCEEDS_CLEARED" "refund cap code"
 net_req POST "$NET/v1/test/purchases/$TRACE2/reverse" '{"amount":400}'
 expect_status 200 "partial reverse of 4.00"
 expect_eq "$(json hold_status)/$(json hold_amount)" "ACTIVE/600" "hold stays ACTIVE with 6.00"
-expect_eq "$(available_of $ALICE_CREDIT)" 497900 "available 4979.00"
+expect_eq "$(available_of $ALICE_CREDIT)" "$((BASE - 2100))" "partial reverse credits 4.00"
 
 CLR="{\"clearing_id\":\"smoke-clr-1\",\"trace_id\":\"$TRACE2\",\"type\":\"REVERSE\",\"amount\":100,\"currency\":\"USD\"}"
 svc_req POST "$CARD/internal/v1/clearing" "$CLR"; expect_status 200 "clearing record smoke-clr-1"

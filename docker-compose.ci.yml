@@ -49,6 +49,11 @@ services:
     environment:
       LOG_LEVEL: INFO
 
+  wallet-txn:
+    <<: *ci-python
+    environment:
+      LOG_LEVEL: INFO
+
   network-mock:
     <<: *ci-python
     environment:

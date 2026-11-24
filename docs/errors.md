@@ -38,7 +38,7 @@ The list grows with each phase.
 | `SIGNATURE_EXPIRED` | 401 | `X-Timestamp` more than 300 s from the shared clock |
 
 The same three codes are returned by the wallet operator mock when a request from the bank
-is not signed correctly.
+(including the GET of the daily enrolment file) is not signed correctly.
 
 ## auth-service
 
@@ -107,6 +107,9 @@ Other network-mock responses pass card-service's status and body through unchang
 | `ENROLLMENT_NOT_FOUND` | 404 | Operator callback for an unknown `enrollment_id` |
 | `ORCHESTRATION_FAILED` | 502 | `POST /test/customers`: a call to another service failed. `details.upstream` |
 
+| `RUN_NOT_FOUND` | 404 | `GET /internal/v1/reconciliation/runs/{id}` for an unknown run |
+| `OPERATOR_FILE_UNAVAILABLE` | 502 | Reconciliation could not fetch the operator's file; the run is stored as FAILED. `details.run_id` |
+
 A missing `terms_version` on opt-in or add-card is `VALIDATION_ERROR` (422).
 
 Eligibility reason codes (in priority order; the first failing one is shown):
@@ -116,6 +119,22 @@ Eligibility reason codes (in priority order; the first failing one is shown):
 Operator callbacks that are acknowledged but change nothing are not errors: they return 200
 with `result` set to `DUPLICATE`, `STALE`, `SUPERSEDED`, `IGNORED_REMOVED` or
 `FAILURE_RECORDED` (`APPLIED` when the callback took effect).
+
+## wallet-txn-service
+
+| error_code | HTTP | When |
+|---|---|---|
+| `TRANSACTION_NOT_FOUND` | 404 | No such transaction, or another customer's (deliberately the same) |
+| `DISPUTE_NOT_FOUND` | 404 | No such dispute, or another customer's |
+| `TRANSACTION_NOT_DISPUTABLE` | 422 | Disputing a DECLINED, REVERSED or REFUNDED transaction. `details.status` |
+| `DISPUTE_ALREADY_OPEN` | 409 | The transaction already has an OPEN dispute. `details.dispute_id` when known |
+| `RECEIPT_TYPE_NOT_ALLOWED` | 422 | The receipt's content is not PDF, PNG or JPEG (its name does not matter) |
+| `RECEIPT_TOO_LARGE` | 422 | The receipt is over 5,242,880 bytes |
+| `INVALID_CURSOR` | 400 | An unreadable `cursor` |
+
+A `from`/`to` that is not a date or a datetime with an offset, `from` after `to`, an unknown
+`status`, an unknown dispute `reason` or a note over 500 characters is `VALIDATION_ERROR` (422).
+`Idempotency-Key` errors are the common ones (`IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_IN_PROGRESS`).
 
 ## wallet-operator-mock
 

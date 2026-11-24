@@ -5,7 +5,8 @@
 # Phase 2 adds card-service and network-mock: cards, lifecycle, authorization, holds,
 # clearing, idempotency. Phase 3 adds profile-service, enrollment-service and the wallet
 # operator mock: the wallet, lost and reissue, opt-out and opt-in, callbacks, eligibility.
-# Later phases extend it towards spec section 11.
+# Phase 4 adds wallet-txn-service (transactions, export, disputes), the Kafka flows into it,
+# DLQs and reconciliation. Phase 5 adds the web app.
 # It starts by resetting and reseeding the stack, so it can be run again and again.
 source "$(dirname "$0")/lib.sh"
 
@@ -136,5 +137,9 @@ source "$(dirname "$0")/smoke-cards.sh"
 # The card checks change alice's cards, so the wallet checks start from a fresh seed.
 "$(dirname "$0")/reset.sh" >/dev/null
 source "$(dirname "$0")/smoke-wallet.sh"
+
+# Reconciliation needs the operator and the SOR to agree, so phase 4 starts fresh too.
+"$(dirname "$0")/reset.sh" >/dev/null
+source "$(dirname "$0")/smoke-txns.sh"
 
 printf '\nSmoke passed: %d checks.\n' "$PASSED"

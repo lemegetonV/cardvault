@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, Path
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from shared import http_client, seed_data
+from shared import http_client, seed_data, seed_txns
 from shared.errors import AppError, ErrorBody
 from shared.faults import FaultRegistry, FaultScope
 from shared.runtime import Runtime, ServiceSpec, create_app
@@ -296,6 +296,18 @@ async def on_seed(_: Runtime) -> None:
                 "card_id": str(card.card_id),
                 "enrollment_id": str(e.enrollment_id),
             }
+    # Seed purchases, so tests can clear (settle, reverse, refund) seeded authorizations.
+    for t in seed_txns.TXNS:
+        state.purchases[t.trace_id] = {
+            "trace_id": t.trace_id,
+            "card_id": str(t.card.card_id),
+            "token_ref": t.token_ref,
+            "token_requestor": "WALLET",
+            "amount": t.amount,
+            "currency": "USD",
+            "merchant_name": t.merchant_name,
+            "mcc": t.mcc,
+        }
 
 
 app = create_app(

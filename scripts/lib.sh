@@ -20,6 +20,7 @@ SERVICES=(
   "card=http://localhost:8002"
   "profile=http://localhost:8005"
   "enrollment=http://localhost:8003"
+  "wallet-txn=http://localhost:8004"
   "network-mock=http://localhost:8102"
   "wallet-operator-mock=http://localhost:8101"
 )
