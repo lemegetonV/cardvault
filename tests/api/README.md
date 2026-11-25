@@ -69,6 +69,8 @@ src/cardvault_tests/    framework code (imported by tests)
   auth.py               BearerAuth, ServiceKeyAuth, TestKeyAuth (httpx.Auth classes)
   clients/              one class per API area, plus the /test/* controls
   models/               pydantic models of the responses
+  signing.py            HMAC signing of operator callbacks
+  wallet.py             wallet_card(), wait_for_enrolment()
   checks.py             expect(), expect_status(), expect_error()
   waits.py              wait_until(): bounded polling instead of sleeps
   data.py               seed facts and templates for fresh customers
@@ -76,8 +78,10 @@ src/cardvault_tests/    framework code (imported by tests)
   environment.py        wait for /ready, reset and reseed before the run
 tests/
   conftest.py           root fixtures (services, controls, card_network, make_customer,
-                        alice, shared_clock)
+                        alice, shared_clock, enrolments, callbacks, operator,
+                        operator_records)
   health/ auth/ cards/ authorization/ clearing/ idempotency/ concurrency/
+  eligibility/ enrolment/ callbacks/ profile/
                         one folder per area of the spec
 ```
 

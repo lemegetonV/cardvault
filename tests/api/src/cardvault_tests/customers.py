@@ -16,6 +16,8 @@ from cardvault_tests.auth import BearerAuth
 from cardvault_tests.checks import expect
 from cardvault_tests.clients.auth import AuthClient
 from cardvault_tests.clients.cards import CardsClient
+from cardvault_tests.clients.profile import ProfileClient
+from cardvault_tests.clients.wallet import WalletClient
 from cardvault_tests.models import NewCard, Tokens
 
 
@@ -41,6 +43,8 @@ class Customer:
     bearer: BearerAuth
     cards: CardsClient
     auth: AuthClient
+    wallet: WalletClient
+    profile: ProfileClient
     new_cards: list[NewCard]
 
     @property
@@ -60,5 +64,13 @@ def log_in(services: Services, username: str, password: str, new_cards: list[New
         bearer=bearer,
         cards=CardsClient(services.card, bearer),
         auth=AuthClient(services.auth, bearer),
+        wallet=WalletClient(services.enrollment, bearer),
+        profile=ProfileClient(services.profile, bearer),
         new_cards=new_cards,
     )
+
+
+def log_in_again(services: Services, customer: Customer) -> Customer:
+    """A new session for the same customer, e.g. after moving the clock past the old
+    token's expiry. Tokens are judged by the shared clock, so a big time jump ends them."""
+    return log_in(services, customer.username, customer.password, customer.new_cards)

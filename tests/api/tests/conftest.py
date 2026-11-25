@@ -23,11 +23,14 @@ from cardvault_tests.auth import ServiceKeyAuth
 from cardvault_tests.checks import expect, expect_status
 from cardvault_tests.clients.card_network import CardNetworkClient
 from cardvault_tests.clients.control import EnrollmentControl, ServiceControl
+from cardvault_tests.clients.enrolment import EnrolmentInspector, OperatorCallbacks
+from cardvault_tests.clients.operator import OperatorControl
 from cardvault_tests.customers import Customer, Services, log_in
 from cardvault_tests.data import ALICE
 from cardvault_tests.http import exchanges, make_client
-from cardvault_tests.models import NewCustomer
+from cardvault_tests.models import ClockView, NewCustomer
 from cardvault_tests.settings import Settings, get_settings
+from cardvault_tests.waits import wait_until
 
 # ---------------------------------------------------------------- run start
 
@@ -138,6 +141,17 @@ def card_network(services: Services, settings: Settings) -> CardNetworkClient:
     return CardNetworkClient(services.card, ServiceKeyAuth(settings.service_key_tests))
 
 
+@pytest.fixture(scope="session")
+def enrolments(services: Services, settings: Settings) -> EnrolmentInspector:
+    return EnrolmentInspector(services.enrollment, settings.test_key, settings.service_key_tests)
+
+
+@pytest.fixture(scope="session")
+def callbacks(services: Services, settings: Settings) -> OperatorCallbacks:
+    """Send signed callbacks to the bank as the wallet operator would."""
+    return OperatorCallbacks(services.enrollment, settings.operator_hmac_secret)
+
+
 # ---------------------------------------------------------------- customers
 
 
@@ -166,7 +180,39 @@ def alice(services: Services, settings: Settings) -> Customer:
 @pytest.fixture
 def shared_clock(controls: dict[str, ServiceControl]) -> Iterator[ServiceControl]:
     """Move CardVault's shared clock in a ``serial`` test; real time is restored afterwards,
-    whether the test passed or failed."""
+    whether the test passed or failed.
+
+    Each service re-reads the clock at most once a second, so the reset is awaited on every
+    service. Otherwise the next test could start while one service still runs ahead."""
     control = controls["auth"]
     yield control
     expect_status(control.set_clock(reset=True), 200)
+    wait_until(
+        lambda: [expect(c.clock(), 200, ClockView).offset_seconds for c in controls.values()],
+        lambda offsets: not any(offsets),
+        timeout=5,
+        what="every service to be back on real time",
+    )
+
+
+@pytest.fixture
+def operator(services: Services, settings: Settings) -> Iterator[OperatorControl]:
+    """Make the wallet operator mock misbehave in a ``serial`` test; every control is turned
+    off again afterwards, whether the test passed or failed."""
+    control = OperatorControl(services.operator, settings.test_key)
+    yield control
+    expect_status(control.behave(), 200)
+
+
+@pytest.fixture
+def operator_records(services: Services, settings: Settings) -> Callable[[object], dict]:
+    """Read the operator mock's record of one enrolment: what the outside world holds."""
+    control = OperatorControl(services.operator, settings.test_key)
+
+    def record(enrollment_id: object) -> dict:
+        records = expect_status(control.state(), 200).json()["records"]
+        found = [r for r in records if r["enrollment_id"] == str(enrollment_id)]
+        assert found, f"the operator holds no record for enrolment {enrollment_id}"
+        return found[0]
+
+    return record

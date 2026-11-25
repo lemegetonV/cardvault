@@ -10,8 +10,20 @@ from cardvault_tests.models.cards import Card, CardPage
 from cardvault_tests.models.common import ErrorBody
 from cardvault_tests.models.payments import Authorization, Clearing
 from cardvault_tests.models.testsupport import ClockView, NewCard, NewCustomer
+from cardvault_tests.models.wallet import (
+    CallbackAck,
+    Enrolment,
+    Profile,
+    Wallet,
+    WalletCard,
+)
 
 __all__ = [
+    "CallbackAck",
+    "Enrolment",
+    "Profile",
+    "Wallet",
+    "WalletCard",
     "Authorization",
     "Clearing",
     "Card",
