@@ -52,6 +52,21 @@ def test_login_with_an_empty_field_is_refused(username, password):
     assert response.json()["error_code"] == "VALIDATION_ERROR"
 
 
+def test_refresh_gives_new_tokens_and_the_old_refresh_token_stops_working():
+    someone = create_logged_in_customer(cards=[])
+    login = AuthApi().login(someone["username"], someone["password"]).json()
+
+    refreshed = AuthApi().refresh(login["refresh_token"])
+
+    assert refreshed.status_code == 200
+    # The new access token works.
+    assert AuthApi().me(refreshed.json()["access_token"]).status_code == 200
+    # The old refresh token was used once, so using it again is refused.
+    reused = AuthApi().refresh(login["refresh_token"])
+    assert reused.status_code == 401
+    assert reused.json()["error_code"] == "REFRESH_TOKEN_REUSED"
+
+
 def test_me_tells_who_is_logged_in(alice_token):
     response = AuthApi().me(alice_token)
 

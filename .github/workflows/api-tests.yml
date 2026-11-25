@@ -36,7 +36,7 @@ jobs:
 
       - name: Run the tests
         working-directory: tests/api
-        run: pytest --html=reports/report.html --self-contained-html --junitxml=reports/junit.xml
+        run: pytest -n 4 --html=reports/report.html --self-contained-html --junitxml=reports/junit.xml
 
       - name: Save the CardVault logs
         if: always()
