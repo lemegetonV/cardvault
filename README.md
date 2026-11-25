@@ -10,9 +10,9 @@ It is an **application under test**: it exists so that API and UI test framework
 built against realistic behaviour (auth, idempotency, events, signed callbacks, failures,
 reconciliation) with test-only controls, deterministic seed data and observable state.
 
-> Build status: complete (all 6 phases in `SPEC.md` section 13). The test frameworks live in
-> `tests-api/` (pytest + httpx) and `tests-ui/` (Playwright); `evals/` is reserved for
-> agent evaluations.
+> Build status: complete (all 6 phases in `SPEC.md` section 13). The API test suite
+> (pytest + httpx) lives in `tests/api/`; the Playwright suite will live in `tests/ui/`;
+> `evals/` is reserved for agent evaluations.
 
 ## How it fits together
 
