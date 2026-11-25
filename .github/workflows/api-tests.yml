@@ -49,14 +49,24 @@ jobs:
         working-directory: tests/api
         run: uv sync --frozen
 
-      - name: Run the suite
+      - name: Run the suite in parallel
         working-directory: tests/api
         env:
           TEST_ENV: local
         run: >
           uv run pytest -n auto
           --alluredir allure-results
-          --junitxml reports/junit.xml
+          --junitxml reports/junit-parallel.xml
+
+      - name: Run the serial tests (shared clock, faults) on their own
+        if: success() || failure()
+        working-directory: tests/api
+        env:
+          TEST_ENV: local
+        run: >
+          uv run pytest -m serial
+          --alluredir allure-results
+          --junitxml reports/junit-serial.xml
 
       - name: Build the Allure report
         if: always()

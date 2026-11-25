@@ -25,10 +25,10 @@ packages = ["src/cardvault_tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --dist loadgroup"
+addopts = "-ra --strict-markers"
 markers = [
     "smoke: a fast check that the stack is up and the main paths answer",
-    "serial: changes something every service shares (the clock, faults, mock controls); runs alone",
+    "serial: changes something every service shares (the clock, faults, mock controls); left out of parallel runs, run with -m serial",
     "slow: waits on retries, timeouts or delayed callbacks",
 ]
 xfail_strict = true

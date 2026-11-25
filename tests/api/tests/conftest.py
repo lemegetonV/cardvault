@@ -54,16 +54,28 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         environment.reset_and_seed(controls)
 
 
-def pytest_report_header(config: pytest.Config) -> str:
+def _parallel(config: pytest.Config) -> bool:
+    return hasattr(config, "workerinput") or bool(getattr(config.option, "numprocesses", 0))
+
+
+def pytest_report_header(config: pytest.Config) -> list[str]:
     s = get_settings()
-    return f"CardVault environment: {s.test_env} (auth at {s.auth_url})"
+    lines = [f"CardVault environment: {s.test_env} (auth at {s.auth_url})"]
+    if _parallel(config):
+        lines.append("Parallel run: serial tests are left out; run them with: pytest -m serial")
+    return lines
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    # Tests that change something every service shares run in one xdist group, one at a time.
-    for item in items:
-        if item.get_closest_marker("serial"):
-            item.add_marker(pytest.mark.xdist_group("serial"))
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # A serial test moves something every service shares (the clock, faults). While it runs,
+    # any other test would see that change too, so in a parallel run serial tests are left
+    # out, and run afterwards on their own with `pytest -m serial`.
+    if not _parallel(config):
+        return
+    serial = [item for item in items if item.get_closest_marker("serial")]
+    if serial:
+        config.hook.pytest_deselected(items=serial)
+        items[:] = [item for item in items if not item.get_closest_marker("serial")]
 
 
 # ---------------------------------------------------------------- evidence

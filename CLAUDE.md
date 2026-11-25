@@ -99,7 +99,7 @@ then `docker compose up -d --no-build --wait`.
   `tests/<area>/`. `TEST_ENV=local|stage` picks `envs/<env>.env`; secrets go in the
   untracked `tests/api/.env.<env>`.
 - State-changing tests use `make_customer(data.customer(...))`; seed customers are
-  read-only. Clock/fault/mock-control tests are `@pytest.mark.serial`.
+  read-only. Clock/fault/mock-control tests are `@pytest.mark.serial` (left out of `-n` runs; run `-m serial` after).
 - The suite must stay green locally and in `api-tests.yml` with every bug flag off. Never
   use `/test/bugs` or name seeded bugs in tests or docs.
 - Run: `cd tests/api && uv run pytest -n auto`.

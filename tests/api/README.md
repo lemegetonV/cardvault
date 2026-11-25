@@ -14,7 +14,8 @@ make up && make seed          # from the repo root
 cd tests/api
 uv sync                       # once: creates .venv with the suite's dependencies
 uv run pytest                 # everything, one test at a time
-uv run pytest -n auto         # in parallel
+uv run pytest -n auto         # in parallel (serial tests left out) ...
+uv run pytest -m serial       # ... then the serial tests on their own
 uv run pytest -m smoke        # the quick "is it up" subset
 ```
 
@@ -85,8 +86,9 @@ tests/
 - **Fresh data for every change.** A test that changes state creates its own customer with
   `make_customer(...)` (`POST /test/customers`). The seed customers are only read.
 - **Shared switches run alone.** Tests that move the shared clock or inject faults are
-  marked `serial`; they run in one xdist group, and their fixtures restore the clock or
-  clear faults even when the test fails.
+  marked `serial`: while one runs, every other test would see the change. A parallel run
+  (`-n`) leaves them out; run them afterwards with `pytest -m serial`. Their fixtures
+  restore the clock or clear faults even when the test fails.
 - **Wait, never sleep.** Anything that happens after the response is awaited with
   `wait_until`, which polls with a timeout and fails with the last value it saw.
 
@@ -101,5 +103,6 @@ tests/
 ## CI
 
 `.github/workflows/api-tests.yml` runs on pushes to `main` and `test/api` and on every pull
-request: it starts the stack with the start-stack action, runs `pytest -n auto`, and
+request: it starts the stack with the start-stack action, runs `pytest -n auto` and then
+`pytest -m serial`, and
 uploads the Allure report, JUnit XML and `docker compose logs` as one artifact.
