@@ -3,10 +3,12 @@
 ## What this repo is
 CardVault is an application under test (AUT) for a Senior SDET portfolio: one fictional
 bank's side of a bank-backed checkout wallet. `SPEC.md` is the build spec; **section 16
-overrides sections 1 to 15**. Claude builds the AUT only (`app/`, compose files, `Makefile`,
-`scripts/`, `.github/`, docs). The owner writes `tests-api/` (pytest + httpx) and
-`tests-ui/` (Playwright TS). `evals/` is reserved for the future agent work (spec 15).
-Never write test frameworks; `scripts/smoke.sh` is the only test code.
+overrides sections 1 to 15**. Claude built the AUT (`app/`, compose files, `Makefile`,
+`scripts/`, `.github/`, docs). The test suites came later, at the owner's request
+(2026-11-25): the pytest + httpx API suite lives in `tests/api/` (built on branch `test/api`,
+its own uv project; see `tests/api/README.md`), and the Playwright suite will live in
+`tests/ui/` (placeholder `tests-ui/` until then). `evals/` is reserved for the future agent
+work (spec 15). Inside `app/`, `scripts/smoke.sh` stays the only test code.
 
 ## Rules that are easy to forget
 - Fictional and generic only: no real bank, wallet, network or operator names or flows.
@@ -90,3 +92,15 @@ Docker Hub may rate-limit; pull from `mirror.gcr.io/library/...` and
 proxy need the CA as a build secret:
 `docker build --network host --secret id=build_ca,src=/root/.ccr/ca-bundle.crt --build-arg HTTPS_PROXY=$HTTPS_PROXY --build-arg SERVICE=auth -t cardvault/auth:local app`
 then `docker compose up -d --no-build --wait`.
+
+## API test suite (`tests/api/`)
+- Separate uv project; never imports `app/` code. Package `src/cardvault_tests/` (settings,
+  http, auth, clients, models, checks, waits, data, customers, environment, signing, wallet,
+  transactions, events, db); tests in `tests/<area>/`. Kafka is read with confluent-kafka
+  (`watch` fixture, schemas from `docs/events`); databases only through the `<db>_ro` roles. `TEST_ENV=local|stage` picks `envs/<env>.env`; secrets go in the
+  untracked `tests/api/.env.<env>`.
+- State-changing tests use `make_customer(data.customer(...))`; seed customers are
+  read-only. Clock/fault/mock-control tests are `@pytest.mark.serial` (left out of `-n` runs; run `-m serial` after).
+- The suite must stay green locally and in `api-tests.yml` with every bug flag off. Never
+  use `/test/bugs` or name seeded bugs in tests or docs.
+- Run: `cd tests/api && uv run pytest -n auto`.
