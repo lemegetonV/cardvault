@@ -19,7 +19,9 @@ from typing import Any
 import pytest
 
 from cardvault_tests import environment
+from cardvault_tests.auth import ServiceKeyAuth
 from cardvault_tests.checks import expect, expect_status
+from cardvault_tests.clients.card_network import CardNetworkClient
 from cardvault_tests.clients.control import EnrollmentControl, ServiceControl
 from cardvault_tests.customers import Customer, Services, log_in
 from cardvault_tests.data import ALICE
@@ -116,6 +118,12 @@ def orchestrator(controls: dict[str, ServiceControl]) -> EnrollmentControl:
     control = controls["enrollment"]
     assert isinstance(control, EnrollmentControl)
     return control
+
+
+@pytest.fixture(scope="session")
+def card_network(services: Services, settings: Settings) -> CardNetworkClient:
+    """card-service's authorization and clearing API, called as the "tests" service."""
+    return CardNetworkClient(services.card, ServiceKeyAuth(settings.service_key_tests))
 
 
 # ---------------------------------------------------------------- customers

@@ -74,8 +74,10 @@ src/cardvault_tests/    framework code (imported by tests)
   customers.py          a logged-in customer and their clients
   environment.py        wait for /ready, reset and reseed before the run
 tests/
-  conftest.py           root fixtures (services, controls, make_customer, alice, shared_clock)
-  health/ auth/ cards/  one folder per area of the spec
+  conftest.py           root fixtures (services, controls, card_network, make_customer,
+                        alice, shared_clock)
+  health/ auth/ cards/ authorization/ clearing/ idempotency/ concurrency/
+                        one folder per area of the spec
 ```
 
 ## Rules the suite keeps
