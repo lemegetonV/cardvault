@@ -23,10 +23,16 @@ from cardvault_tests.auth import ServiceKeyAuth
 from cardvault_tests.checks import expect, expect_status
 from cardvault_tests.clients.card_network import CardNetworkClient
 from cardvault_tests.clients.control import EnrollmentControl, ServiceControl
-from cardvault_tests.clients.enrolment import EnrolmentInspector, OperatorCallbacks
+from cardvault_tests.clients.enrolment import (
+    EnrolmentInspector,
+    OperatorCallbacks,
+    Reconciliation,
+)
 from cardvault_tests.clients.operator import OperatorControl
 from cardvault_tests.customers import Customer, Services, log_in
 from cardvault_tests.data import ALICE
+from cardvault_tests.db import ReadOnlyDb
+from cardvault_tests.events import EventWatch
 from cardvault_tests.http import exchanges, make_client
 from cardvault_tests.models import ClockView, NewCustomer
 from cardvault_tests.settings import Settings, get_settings
@@ -147,6 +153,11 @@ def enrolments(services: Services, settings: Settings) -> EnrolmentInspector:
 
 
 @pytest.fixture(scope="session")
+def reconciliation(services: Services, settings: Settings) -> Reconciliation:
+    return Reconciliation(services.enrollment, settings.service_key_tests)
+
+
+@pytest.fixture(scope="session")
 def callbacks(services: Services, settings: Settings) -> OperatorCallbacks:
     """Send signed callbacks to the bank as the wallet operator would."""
     return OperatorCallbacks(services.enrollment, settings.operator_hmac_secret)
@@ -216,3 +227,47 @@ def operator_records(services: Services, settings: Settings) -> Callable[[object
         return found[0]
 
     return record
+
+
+@pytest.fixture
+def faults(controls: dict[str, ServiceControl]) -> Iterator[Callable[..., None]]:
+    """Inject faults into a service in a ``serial`` test: ``faults("card", {...})``.
+    Every service touched is cleared afterwards, whether the test passed or failed."""
+    touched: set[str] = set()
+
+    def inject(service: str, *specs: dict[str, Any]) -> None:
+        touched.add(service)
+        expect_status(controls[service].set_faults(list(specs)), 200)
+
+    yield inject
+    for service in touched:
+        expect_status(controls[service].set_faults([]), 200)
+
+
+@pytest.fixture(scope="session")
+def operator_state(services: Services, settings: Settings) -> OperatorControl:
+    """Change the operator mock's records directly (no controls). Safe in parallel when a
+    test only touches records of its own fresh enrolments."""
+    return OperatorControl(services.operator, settings.test_key)
+
+
+@pytest.fixture
+def watch(settings: Settings) -> Iterator[Callable[[str], EventWatch]]:
+    """Start reading a Kafka topic from its current end: ``events = watch("auth.decided")``.
+    Call it before the action, so the event cannot be published before the watch begins."""
+    opened: list[EventWatch] = []
+
+    def start(topic: str) -> EventWatch:
+        w = EventWatch(settings.kafka_bootstrap, topic)
+        opened.append(w)
+        return w
+
+    yield start
+    for w in opened:
+        w.close()
+
+
+@pytest.fixture(scope="session")
+def db(settings: Settings) -> ReadOnlyDb:
+    """Read-only SQL against a service's own database (the ``<db>_ro`` role)."""
+    return ReadOnlyDb(settings)

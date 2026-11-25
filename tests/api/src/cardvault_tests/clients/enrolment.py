@@ -61,3 +61,19 @@ class OperatorCallbacks:
 
     def send_unsigned(self, payload: dict[str, Any]) -> httpx.Response:
         return self.http.post("/v1/callbacks/operator", json=payload)
+
+
+class Reconciliation:
+    """enrollment-service's reconciliation runs: the bank's enrolment records (the system of
+    record, SOR) compared with the operator's daily file. Called with the tests service key."""
+
+    def __init__(self, http: httpx.Client, service_key: str) -> None:
+        self.http = http
+        self.auth = ServiceKeyAuth(service_key)
+
+    def run(self, file_date: str | None = None, auth: httpx.Auth | None = None) -> httpx.Response:
+        body = {"file_date": file_date} if file_date else None
+        return self.http.post("/internal/v1/reconciliation/runs", json=body, auth=auth or self.auth)
+
+    def get(self, run_id: object) -> httpx.Response:
+        return self.http.get(f"/internal/v1/reconciliation/runs/{run_id}", auth=self.auth)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from cardvault_tests.models.common import ApiModel
@@ -54,3 +54,24 @@ class Profile(ApiModel):
     phone_verified: bool
     version: int
     updated_at: datetime
+
+
+class Finding(ApiModel):
+    type: Literal["MISSING_AT_OPERATOR", "MISSING_IN_SOR", "STATUS_MISMATCH", "DATA_MISMATCH"]
+    enrollment_id: uuid.UUID | None
+    card_id: uuid.UUID | None
+    operator_ref: str | None
+    sor_status: str | None
+    operator_status: str | None
+    details: dict
+
+
+class ReconciliationRun(ApiModel):
+    run_id: uuid.UUID
+    file_date: date
+    status: Literal["COMPLETED", "FAILED"]
+    sor_records: int
+    file_records: int
+    skipped_in_flight: int
+    finding_count: int
+    findings: list[Finding]

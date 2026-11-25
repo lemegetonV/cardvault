@@ -90,6 +90,14 @@ def _body_text(content: bytes, content_type: str) -> str:
     return f"<{len(content)} bytes of {content_type or 'binary'}>"
 
 
+def _request_body(request: httpx.Request) -> str:
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/"):
+        # A multipart upload is streamed, so its bytes are not kept; its size is enough.
+        return f"<multipart form, {request.headers.get('content-length', '?')} bytes>"
+    return _body_text(request.content, content_type)
+
+
 def _add_correlation_id(request: httpx.Request) -> None:
     request.headers.setdefault("X-Correlation-ID", new_correlation_id())
 
@@ -102,7 +110,7 @@ def _record(response: httpx.Response) -> None:
         url=str(request.url),
         status=response.status_code,
         correlation_id=request.headers.get("X-Correlation-ID", ""),
-        request_body=_body_text(request.content, request.headers.get("content-type", "")),
+        request_body=_request_body(request),
         response_body=_body_text(response.content, response.headers.get("content-type", "")),
     )
     exchanges.items.append(ex)

@@ -17,6 +17,7 @@ from cardvault_tests.checks import expect
 from cardvault_tests.clients.auth import AuthClient
 from cardvault_tests.clients.cards import CardsClient
 from cardvault_tests.clients.profile import ProfileClient
+from cardvault_tests.clients.transactions import TransactionsClient
 from cardvault_tests.clients.wallet import WalletClient
 from cardvault_tests.models import NewCard, Tokens
 
@@ -45,6 +46,7 @@ class Customer:
     auth: AuthClient
     wallet: WalletClient
     profile: ProfileClient
+    transactions: TransactionsClient
     new_cards: list[NewCard]
 
     @property
@@ -66,6 +68,7 @@ def log_in(services: Services, username: str, password: str, new_cards: list[New
         auth=AuthClient(services.auth, bearer),
         wallet=WalletClient(services.enrollment, bearer),
         profile=ProfileClient(services.profile, bearer),
+        transactions=TransactionsClient(services.wallet_txn, bearer),
         new_cards=new_cards,
     )
 

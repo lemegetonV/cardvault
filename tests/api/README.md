@@ -71,6 +71,9 @@ src/cardvault_tests/    framework code (imported by tests)
   models/               pydantic models of the responses
   signing.py            HMAC signing of operator callbacks
   wallet.py             wallet_card(), wait_for_enrolment()
+  transactions.py       wallet_purchase(), wait_for_transaction()
+  events.py             EventWatch: read a Kafka topic from now on; schema checks
+  db.py                 read-only SQL (the <db>_ro roles)
   checks.py             expect(), expect_status(), expect_error()
   waits.py              wait_until(): bounded polling instead of sleeps
   data.py               seed facts and templates for fresh customers
@@ -78,10 +81,12 @@ src/cardvault_tests/    framework code (imported by tests)
   environment.py        wait for /ready, reset and reseed before the run
 tests/
   conftest.py           root fixtures (services, controls, card_network, make_customer,
-                        alice, shared_clock, enrolments, callbacks, operator,
-                        operator_records)
+                        alice, shared_clock, faults, enrolments, callbacks,
+                        operator, operator_state, operator_records, reconciliation,
+                        watch, db)
   health/ auth/ cards/ authorization/ clearing/ idempotency/ concurrency/
-  eligibility/ enrolment/ callbacks/ profile/
+  eligibility/ enrolment/ callbacks/ profile/ transactions/ disputes/
+  reconciliation/ events/ storage/
                         one folder per area of the spec
 ```
 

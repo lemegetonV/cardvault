@@ -11,6 +11,9 @@ dependencies = [
     "pyjwt[crypto]>=2.15",
     "pytest-xdist>=3.8",
     "allure-pytest>=2.16",
+    "confluent-kafka>=2.12",
+    "jsonschema>=4.25",
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]
