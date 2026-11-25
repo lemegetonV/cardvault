@@ -5,8 +5,8 @@ CardVault is an application under test (AUT) for a Senior SDET portfolio: one fi
 bank's side of a bank-backed checkout wallet. `SPEC.md` is the build spec; **section 16
 overrides sections 1 to 15**. Claude built the AUT (`app/`, compose files, `Makefile`,
 `scripts/`, `.github/`, docs). The test suites came later, at the owner's request
-(2026-11-25): the pytest + httpx API suite lives in `tests/api/` (built on branch `test/api`,
-its own uv project; see `tests/api/README.md`), and the Playwright suite will live in
+(2026-11-25): the pytest + requests API suite lives in `tests/api/` (rewritten 2026-11-25 as a
+small beginner-readable suite for interview prep; see `tests/api/README.md`), and the Playwright suite will live in
 `tests/ui/` (placeholder `tests-ui/` until then). `evals/` is reserved for the future agent
 work (spec 15). Inside `app/`, `scripts/smoke.sh` stays the only test code.
 
@@ -94,13 +94,14 @@ proxy need the CA as a build secret:
 then `docker compose up -d --no-build --wait`.
 
 ## API test suite (`tests/api/`)
-- Separate uv project; never imports `app/` code. Package `src/cardvault_tests/` (settings,
-  http, auth, clients, models, checks, waits, data, customers, environment, signing, wallet,
-  transactions, events, db); tests in `tests/<area>/`. Kafka is read with confluent-kafka
-  (`watch` fixture, schemas from `docs/events`); databases only through the `<db>_ro` roles. `TEST_ENV=local|stage` picks `envs/<env>.env`; secrets go in the
-  untracked `tests/api/.env.<env>`.
-- State-changing tests use `make_customer(data.customer(...))`; seed customers are
-  read-only. Clock/fault/mock-control tests are `@pytest.mark.serial` (left out of `-n` runs; run `-m serial` after).
-- The suite must stay green locally and in `api-tests.yml` with every bug flag off. Never
-  use `/test/bugs` or name seeded bugs in tests or docs.
-- Run: `cd tests/api && uv run pytest -n auto`.
+- Written for a learner new to Python (the owner's interview prep, 2026-11-25): plain functions,
+  simple classes, dictionaries and `assert`. No generics, pydantic, xdist, Kafka or database
+  access. If a line needs a paragraph to explain, rewrite it. The earlier 397-case suite is in
+  git history (commit 991fbdc).
+- Layout: `config.py` (URLs from env vars with local defaults), `conftest.py` (fixtures
+  `alice_token`, `customer`), `helpers.py` (`create_logged_in_customer`, wait helpers),
+  `api/` (one class per service, methods return the `requests` response), `data/`, `tests/`.
+- State-changing tests use a fresh customer (`POST /test/customers`); alice is read-only.
+- Never use `/test/bugs` or name seeded bugs in tests or docs. Green locally and in
+  `api-tests.yml` with every bug flag off.
+- Run: `cd tests/api && pip install -r requirements.txt && pytest` (54 passed).
