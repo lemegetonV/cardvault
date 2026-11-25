@@ -1,5 +1,7 @@
 """Logging in: the Login service (auth-service)."""
 
+import uuid
+
 import pytest
 
 import config
@@ -31,7 +33,10 @@ def test_login_with_wrong_password_is_refused():
 
 def test_unknown_user_gets_the_same_error_as_a_wrong_password():
     # The app must not reveal which usernames exist.
-    response = AuthApi().login("nobody-has-this-name", "not-the-password")
+    # A new made-up name every run: failed logins count towards a lockout even
+    # for names that do not exist, so a fixed name would be locked after 5 runs.
+    unknown_username = f"nobody-{uuid.uuid4().hex[:8]}"
+    response = AuthApi().login(unknown_username, "not-the-password")
 
     assert response.status_code == 401
     assert response.json()["error_code"] == "INVALID_CREDENTIALS"
