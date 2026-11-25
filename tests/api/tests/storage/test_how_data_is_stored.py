@@ -7,17 +7,14 @@ the services' databases with the read-only role, and only for those promises.
 
 from __future__ import annotations
 
-import re
-
 import psycopg
 import pytest
 
+from cardvault_tests.checks import pan_like
 from cardvault_tests.data import card, customer
 from cardvault_tests.db import connect
 from cardvault_tests.transactions import wallet_purchase
 from cardvault_tests.waits import wait_until
-
-PAN_LIKE = re.compile(r"\d{13,19}")
 
 
 def test_a_card_number_is_never_stored_in_clear(make_customer, db):
@@ -26,7 +23,7 @@ def test_a_card_number_is_never_stored_in_clear(make_customer, db):
     row = db.one("card", "SELECT * FROM cards WHERE card_id = %s", someone.card_ids[0])
 
     assert row["last4"] == someone.new_cards[0].last4
-    clear = {k: v for k, v in row.items() if isinstance(v, str) and PAN_LIKE.search(v)}
+    clear = {k: v for k, v in row.items() if isinstance(v, str) and pan_like(v)}
     assert clear == {}, f"PAN-like values stored in clear: {list(clear)}"
 
 

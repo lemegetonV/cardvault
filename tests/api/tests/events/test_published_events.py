@@ -11,24 +11,20 @@ Each test starts watching the topic before it acts, then waits for its own event
 
 from __future__ import annotations
 
-import re
 import uuid
 
-from cardvault_tests.checks import expect
+from cardvault_tests.checks import expect, pan_like
 from cardvault_tests.data import card, customer
 from cardvault_tests.events import schema_errors
 from cardvault_tests.models import Authorization, Card, Clearing, Profile, WalletCard
 from cardvault_tests.transactions import wallet_purchase
-
-# 13 to 19 digits in a row would look like a card number (PAN); no event may carry one.
-PAN_LIKE = re.compile(rb"\d{13,19}")
 
 
 def assert_well_formed(event, key) -> None:
     assert schema_errors(event) == [], f"{event.topic} breaks its schema"
     assert event.key == str(key), "keyed so one card's or customer's events stay in order"
     assert event.headers["event_id"] == event.envelope["event_id"]
-    assert not PAN_LIKE.search(event.raw), "an event carries a PAN-like number"
+    assert pan_like(event.raw) == [], "an event carries something that looks like a PAN"
 
 
 def test_a_wallet_purchase_publishes_auth_decided(make_customer, card_network, watch):

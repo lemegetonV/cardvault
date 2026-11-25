@@ -86,7 +86,7 @@ tests/
                         watch, db)
   health/ auth/ cards/ authorization/ clearing/ idempotency/ concurrency/
   eligibility/ enrolment/ callbacks/ profile/ transactions/ disputes/
-  reconciliation/ events/ storage/
+  reconciliation/ events/ storage/ security/ journeys/
                         one folder per area of the spec
 ```
 

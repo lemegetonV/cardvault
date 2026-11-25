@@ -95,8 +95,9 @@ then `docker compose up -d --no-build --wait`.
 
 ## API test suite (`tests/api/`)
 - Separate uv project; never imports `app/` code. Package `src/cardvault_tests/` (settings,
-  http, auth, clients, models, checks, waits, data, customers, environment); tests in
-  `tests/<area>/`. `TEST_ENV=local|stage` picks `envs/<env>.env`; secrets go in the
+  http, auth, clients, models, checks, waits, data, customers, environment, signing, wallet,
+  transactions, events, db); tests in `tests/<area>/`. Kafka is read with confluent-kafka
+  (`watch` fixture, schemas from `docs/events`); databases only through the `<db>_ro` roles. `TEST_ENV=local|stage` picks `envs/<env>.env`; secrets go in the
   untracked `tests/api/.env.<env>`.
 - State-changing tests use `make_customer(data.customer(...))`; seed customers are
   read-only. Clock/fault/mock-control tests are `@pytest.mark.serial` (left out of `-n` runs; run `-m serial` after).
