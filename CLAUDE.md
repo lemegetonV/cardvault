@@ -104,4 +104,4 @@ then `docker compose up -d --no-build --wait`.
 - State-changing tests use a fresh customer (`POST /test/customers`); alice is read-only.
 - Never use `/test/bugs` or name seeded bugs in tests or docs. Green locally and in
   `api-tests.yml` with every bug flag off.
-- Run: `cd tests/api && pip install -r requirements.txt && pytest` (70 passed; `pytest -n 4` works too).
+- Run: `cd tests/api && pip install -r requirements.txt && pytest` (72 passed; `pytest -n 4` works too).

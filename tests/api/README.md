@@ -24,6 +24,7 @@ tests/api/
   data/
     demo_customers.py     what we expect about alice and other fixed values
     schemas.py            JSON Schemas: the shape a card and an error must have
+    files/                a receipt picture and a fake one, for dispute uploads
   tests/                the tests, one file per feature
     test_login.py  test_cards.py  test_wallet.py
     test_purchases.py  test_transactions.py  test_profile.py
@@ -43,7 +44,7 @@ python3 -m venv .venv            # a private folder for this project's libraries
 source .venv/bin/activate        # use it (on Windows: .venv\Scripts\activate)
 pip install -r requirements.txt
 
-pytest                           # every test: 70 passed
+pytest                           # every test: 72 passed
 pytest -m smoke                  # the 5 quick smoke tests
 pytest tests/test_cards.py       # one file
 pytest -k lost                   # tests whose name contains "lost"
