@@ -16,9 +16,15 @@ from kafka import KafkaConsumer, TopicPartition
 import config
 
 
+def connect():
+    """Open a connection to the Kafka broker for reading."""
+    # Tests only look at events. They never save how far they have read, so auto-commit is off.
+    return KafkaConsumer(bootstrap_servers=config.KAFKA_BOOTSTRAP, enable_auto_commit=False)
+
+
 def list_topics():
     """Return the names of all the topics the Kafka broker has."""
-    consumer = KafkaConsumer(bootstrap_servers=config.KAFKA_BOOTSTRAP)
+    consumer = connect()
     topics = consumer.topics()
     consumer.close()
     return topics
@@ -32,7 +38,7 @@ class EventWatcher:
     """
 
     def __init__(self, topic):
-        self.consumer = KafkaConsumer(bootstrap_servers=config.KAFKA_BOOTSTRAP)
+        self.consumer = connect()
         # A topic is split into partitions. Read all of them, starting at their current end.
         partitions = []
         for number in self.consumer.partitions_for_topic(topic):
