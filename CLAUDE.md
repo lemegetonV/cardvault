@@ -95,13 +95,15 @@ then `docker compose up -d --no-build --wait`.
 
 ## API test suite (`tests/api/`)
 - Written for a learner new to Python (the owner's interview prep, 2026-11-25): plain functions,
-  simple classes, dictionaries and `assert`. No generics, pydantic, Kafka or database
-  access. If a line needs a paragraph to explain, rewrite it. The earlier 397-case suite is in
-  git history (commit 991fbdc).
+  simple classes, dictionaries and `assert`. No generics or pydantic. Database and Kafka
+  access only in `database.py`/`events.py` and the `database`/`events` tests (owner's ask,
+  2026-11-26): read-only DB users, watch a topic before the action. If a line needs a
+  paragraph to explain, rewrite it. The earlier 397-case suite is in git history (991fbdc).
 - Layout: `config.py` (URLs from env vars with local defaults), `conftest.py` (fixtures
   `alice_token`, `customer`), `helpers.py` (`create_logged_in_customer`, wait helpers),
+  `database.py` (`query_one`), `events.py` (`EventWatcher`, `list_topics`),
   `api/` (one class per service, methods return the `requests` response), `data/`, `tests/`.
 - State-changing tests use a fresh customer (`POST /test/customers`); alice is read-only.
 - Never use `/test/bugs` or name seeded bugs in tests or docs. Green locally and in
   `api-tests.yml` with every bug flag off.
-- Run: `cd tests/api && pip install -r requirements.txt && pytest` (72 passed; `pytest -n 4` works too).
+- Run: `cd tests/api && pip install -r requirements.txt && pytest` (79 passed; `pytest -n 4` works too).
