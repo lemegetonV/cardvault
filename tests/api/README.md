@@ -11,13 +11,14 @@ the services send each other through Kafka.
 ```
 tests/api/
   requirements.txt      the libraries to install
-  pytest.ini            pytest settings: where tests are, markers
+  pytest.ini            pytest settings: where tests are, markers, logging
   config.py             service addresses and shared settings
   conftest.py           fixtures: alice's login, a fresh customer per test
   helpers.py            create a logged-in customer, wait for slow changes
   database.py           query_one(): read a row from a service's database (read-only user)
   events.py             EventWatcher: wait for an event on a Kafka topic; list_topics()
   api/                  one class per service, one method per API call
+    client.py             the shared HTTP session; logs every request and response
     auth_api.py           login, who am I
     cards_api.py          list cards, report lost, reissue, close
     wallet_api.py         wallet status, add and remove cards, opt out
@@ -72,6 +73,10 @@ pytest --html=reports/report.html --self-contained-html   # with an HTML report
 - **No fixed sleeps.** Changes that finish a moment later (the wallet company
   confirming a card, a purchase reaching the transactions list) are waited for
   with the helpers in `helpers.py`, which give up after 10 seconds.
+
+- **Every call is logged.** All API classes send through one `requests.Session` in
+  `api/client.py`, which logs each request and response (tokens and passwords hidden).
+  pytest shows that log under a failing test and in the HTML report.
 
 - **Database and Kafka checks only where the API cannot show the fact.** They use
   read-only database users, and start watching a topic before the action, so an

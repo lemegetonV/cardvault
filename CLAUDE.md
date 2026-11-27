@@ -102,7 +102,8 @@ then `docker compose up -d --no-build --wait`.
 - Layout: `config.py` (URLs from env vars with local defaults), `conftest.py` (fixtures
   `alice_token`, `customer`), `helpers.py` (`create_logged_in_customer`, wait helpers),
   `database.py` (`query_one`), `events.py` (`EventWatcher`, `list_topics`),
-  `api/` (one class per service, methods return the `requests` response), `data/`, `tests/`.
+  `api/` (one class per service, methods return the `requests` response; all send through
+  the logging `requests.Session` in `api/client.py`), `data/`, `tests/`.
 - State-changing tests use a fresh customer (`POST /test/customers`); alice is read-only.
 - Never use `/test/bugs` or name seeded bugs in tests or docs. Green locally and in
   `api-tests.yml` with every bug flag off.
