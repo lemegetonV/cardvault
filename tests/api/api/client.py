@@ -3,7 +3,8 @@
 requests.Session works like requests.get and requests.post, with two extras:
   - it keeps connections to a service open between calls, so tests run faster;
   - it can run a function after every response. Here log_call writes the call
-    to the log, and pytest shows that log under any test that fails.
+    to the log, and pytest shows that log under any test that fails. In an Allure
+    report, each call also becomes a step with the request and response attached.
 
 So when a test fails, you see every request it sent and every answer it got.
 """
@@ -11,6 +12,7 @@ So when a test fails, you see every request it sent and every answer it got.
 import logging
 import re
 
+import allure
 import requests
 
 log = logging.getLogger("api")
@@ -29,16 +31,34 @@ def log_call(response, *args, **kwargs):
     """requests calls this after every response (it is a "hook")."""
     request = response.request
     milliseconds = round(response.elapsed.total_seconds() * 1000)
-    log.info(f"{request.method} {request.url} -> {response.status_code} in {milliseconds} ms")
-    sent = request.body
-    if isinstance(sent, bytes) and "json" in request.headers.get("Content-Type", ""):
-        sent = sent.decode()  # a JSON body is text, sent as bytes
-    if isinstance(sent, str):
-        log.info(f"  sent: {hide_secrets(sent)[:500]}")
-    elif sent:
-        log.info(f"  sent: {len(sent)} bytes (a file upload)")
-    if "json" in response.headers.get("Content-Type", ""):
-        log.info(f"  got:  {hide_secrets(response.text)[:500]}")
+    title = f"{request.method} {request.url} -> {response.status_code} in {milliseconds} ms"
+    sent = describe_body(request)
+    got = hide_secrets(response.text) if "json" in response.headers.get("Content-Type", "") else ""
+
+    log.info(title)
+    if sent:
+        log.info(f"  sent: {sent[:500]}")
+    if got:
+        log.info(f"  got:  {got[:500]}")
+
+    # Without --alluredir these do nothing, so plain pytest runs are not affected.
+    with allure.step(title):
+        if sent:
+            allure.attach(sent, name="request body", attachment_type=allure.attachment_type.TEXT)
+        if got:
+            allure.attach(got, name="response body", attachment_type=allure.attachment_type.JSON)
+
+
+def describe_body(request):
+    """The body a request sent, as text with secrets hidden ("" if there was none)."""
+    body = request.body
+    if isinstance(body, bytes) and "json" in request.headers.get("Content-Type", ""):
+        body = body.decode()  # a JSON body is text, sent as bytes
+    if isinstance(body, str):
+        return hide_secrets(body)
+    if body:
+        return f"{len(body)} bytes (a file upload)"
+    return ""
 
 
 http = requests.Session()

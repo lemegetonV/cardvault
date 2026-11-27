@@ -18,6 +18,11 @@ class AuthApi:
         body = {"refresh_token": refresh_token}
         return http.post(f"{self.base_url}/v1/auth/refresh", json=body, timeout=config.TIMEOUT)
 
+    def logout(self, refresh_token):
+        """End a session: the refresh token, and every one swapped for it, stop working."""
+        body = {"refresh_token": refresh_token}
+        return http.post(f"{self.base_url}/v1/auth/logout", json=body, timeout=config.TIMEOUT)
+
     def me(self, token):
         """Who is logged in with this token."""
         headers = {"Authorization": f"Bearer {token}"}
