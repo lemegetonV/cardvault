@@ -110,5 +110,6 @@ then `docker compose up -d --no-build --wait`.
 - Run: `cd tests/api && pip install -r requirements.txt && pytest` (93 passed; `pytest -n 4` works too).
   `TEST_ENV=stage` loads `envs/stage.env` (python-dotenv; secrets stay out of the file).
   `--alluredir` feeds the Allure report; each call in `api/client.py` is an Allure step.
+- Lint: `tests/ruff.toml` (run `ruff check .` and `ruff format --check .` from `tests/api` or `tests/perf`).
 - Load test: `tests/perf/locustfile.py` (Locust, read-only demo users, p95/failure budgets
   set the exit code); `api-tests.yml` runs it for 30 s after the API tests.
