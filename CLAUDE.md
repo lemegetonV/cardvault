@@ -107,7 +107,7 @@ then `docker compose up -d --no-build --wait`.
 - State-changing tests use a fresh customer (`POST /test/customers`); alice is read-only.
 - Never use `/test/bugs` or name seeded bugs in tests or docs. Green locally and in
   `api-tests.yml` with every bug flag off.
-- Run: `cd tests/api && pip install -r requirements.txt && pytest` (92 passed; `pytest -n 4` works too).
+- Run: `cd tests/api && pip install -r requirements.txt && pytest` (93 passed; `pytest -n 4` works too).
   `TEST_ENV=stage` loads `envs/stage.env` (python-dotenv; secrets stay out of the file).
   `--alluredir` feeds the Allure report; each call in `api/client.py` is an Allure step.
 - Load test: `tests/perf/locustfile.py` (Locust, read-only demo users, p95/failure budgets

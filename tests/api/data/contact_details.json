@@ -8,5 +8,6 @@
   {"case": "phone with spaces", "changes": {"phone": "+1 555 010 0101"}, "expected_status": 422},
   {"case": "phone with 16 digits, one too many", "changes": {"phone": "+1234567890123456"}, "expected_status": 422},
   {"case": "phone with 15 digits, the most allowed", "changes": {"phone": "+123456789012345"}, "expected_status": 200},
-  {"case": "phone with 2 digits, the fewest allowed", "changes": {"phone": "+12"}, "expected_status": 200}
+  {"case": "phone with 2 digits, the fewest allowed", "changes": {"phone": "+12"}, "expected_status": 200},
+  {"case": "phone with 1 digit, one too few", "changes": {"phone": "+1"}, "expected_status": 422}
 ]

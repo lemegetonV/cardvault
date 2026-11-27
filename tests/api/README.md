@@ -54,7 +54,7 @@ python3 -m venv .venv            # a private folder for this project's libraries
 source .venv/bin/activate        # use it (on Windows: .venv\Scripts\activate)
 pip install -r requirements.txt
 
-pytest                           # every test: 92 passed
+pytest                           # every test: 93 passed
 pytest -m smoke                  # the 5 quick smoke tests
 pytest -m "not database and not events"   # only the API tests (no Postgres or Kafka access needed)
 pytest tests/test_cards.py       # one file
@@ -103,7 +103,7 @@ TEST_ENV=stage pytest
 ```
 
 A variable you set yourself still wins over the file. Where Postgres and Kafka are
-not reachable, skip those tests with `-m "not database and not events"` (85 tests).
+not reachable, skip those tests with `-m "not database and not events"` (86 tests).
 
 ## Load test
 
