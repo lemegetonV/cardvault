@@ -1,0 +1,9 @@
+# Settings for ruff, the linter and formatter that keep this code tidy.
+# Run from tests/api or tests/perf: ruff check .  and  ruff format --check .
+line-length = 100
+# The suite's own modules (config, helpers, api, ...) live in api/, so imports of them
+# are sorted as this project's own, after the libraries.
+src = ["api"]
+
+[lint]
+select = ["E", "F", "W", "I"]

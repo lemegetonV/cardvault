@@ -100,10 +100,16 @@ then `docker compose up -d --no-build --wait`.
   2026-11-26): read-only DB users, watch a topic before the action. If a line needs a
   paragraph to explain, rewrite it. The earlier 397-case suite is in git history (991fbdc).
 - Layout: `config.py` (URLs from env vars with local defaults), `conftest.py` (fixtures
-  `alice_token`, `customer`), `helpers.py` (`create_logged_in_customer`, wait helpers),
+  `alice_token`, `alice_session` (yield, logs out), `customer`), `helpers.py` (`create_logged_in_customer`, wait helpers),
   `database.py` (`query_one`), `events.py` (`EventWatcher`, `list_topics`),
-  `api/` (one class per service, methods return the `requests` response), `data/`, `tests/`.
+  `api/` (one class per service, methods return the `requests` response; all send through
+  the logging `requests.Session` in `api/client.py`), `data/`, `tests/`.
 - State-changing tests use a fresh customer (`POST /test/customers`); alice is read-only.
 - Never use `/test/bugs` or name seeded bugs in tests or docs. Green locally and in
   `api-tests.yml` with every bug flag off.
-- Run: `cd tests/api && pip install -r requirements.txt && pytest` (79 passed; `pytest -n 4` works too).
+- Run: `cd tests/api && pip install -r requirements.txt && pytest` (93 passed; `pytest -n 4` works too).
+  `TEST_ENV=stage` loads `envs/stage.env` (python-dotenv; secrets stay out of the file).
+  `--alluredir` feeds the Allure report; each call in `api/client.py` is an Allure step.
+- Lint: `tests/ruff.toml` (run `ruff check .` and `ruff format --check .` from `tests/api` or `tests/perf`).
+- Load test: `tests/perf/locustfile.py` (Locust, read-only demo users, p95/failure budgets
+  set the exit code); `api-tests.yml` runs it for 30 s after the API tests.

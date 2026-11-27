@@ -36,7 +36,24 @@ jobs:
 
       - name: Run the tests
         working-directory: tests/api
-        run: pytest -n 4 --html=reports/report.html --self-contained-html --junitxml=reports/junit.xml
+        run: pytest -n 4 --html=reports/report.html --self-contained-html --junitxml=reports/junit.xml --alluredir=reports/allure-results
+
+      - name: Run a short load test (Locust)
+        working-directory: tests/perf
+        run: |
+          pip install -r requirements.txt
+          locust --headless --users 10 --spawn-rate 5 --run-time 30s --only-summary --html ../api/reports/load-test.html
+
+      - name: Set up Node.js (for the Allure report tool)
+        if: always()
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Build the Allure report
+        if: always()
+        working-directory: tests/api
+        run: npx --yes allure@3.33.0 generate reports/allure-results --output reports/allure-report
 
       - name: Save the CardVault logs
         if: always()
