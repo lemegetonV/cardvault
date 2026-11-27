@@ -118,10 +118,12 @@ then `docker compose up -d --no-build --wait`.
 - Playwright Test + TypeScript (pinned in `package.json`), same beginner rules as the API suite.
   It backs the Playwright track on the learning site (plan approved by the owner 2026-11-27).
 - `learn/`: one plain spec per Part 1 lesson (no page objects or helpers, each file signs in
-  itself); read-only tests use alice. The framework part (page objects, fixtures, journeys,
+  itself); read-only tests use alice. `forms.spec.ts` changes data, so it uses
+  `learn/helpers/new-customer.ts` (test customer + one purchase, waits until it is listed).
+  The framework part (page objects, fixtures, journeys,
   a fresh customer per state-changing test) comes next. Never use `/test/bugs`.
 - Always wait for `/wallet` after signing in before `page.goto` elsewhere (the login cookie is
   set by the response). Next.js adds a hidden `role="alert"` route announcer, so do not use a
   bare `getByRole('alert')`.
 - Run: `cd tests/ui && npm install && npx playwright install chromium && npx playwright test`
-  (22 passed). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.
+  (25 passed). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.
