@@ -6,8 +6,8 @@ bank's side of a bank-backed checkout wallet. `SPEC.md` is the build spec; **sec
 overrides sections 1 to 15**. Claude built the AUT (`app/`, compose files, `Makefile`,
 `scripts/`, `.github/`, docs). The test suites came later, at the owner's request
 (2026-11-25): the pytest + requests API suite lives in `tests/api/` (rewritten 2026-11-25 as a
-small beginner-readable suite for interview prep; see `tests/api/README.md`), and the Playwright suite will live in
-`tests/ui/` (placeholder `tests-ui/` until then). `evals/` is reserved for the future agent
+small beginner-readable suite for interview prep; see `tests/api/README.md`), and the Playwright suite lives in
+`tests/ui/` (started 2026-11-27; see `tests/ui/README.md`). `evals/` is reserved for the future agent
 work (spec 15). Inside `app/`, `scripts/smoke.sh` stays the only test code.
 
 ## Rules that are easy to forget
@@ -113,3 +113,15 @@ then `docker compose up -d --no-build --wait`.
 - Lint: `tests/ruff.toml` (run `ruff check .` and `ruff format --check .` from `tests/api` or `tests/perf`).
 - Load test: `tests/perf/locustfile.py` (Locust, read-only demo users, p95/failure budgets
   set the exit code); `api-tests.yml` runs it for 30 s after the API tests.
+
+## UI test suite (`tests/ui/`)
+- Playwright Test + TypeScript (pinned in `package.json`), same beginner rules as the API suite.
+  It backs the Playwright track on the learning site (plan approved by the owner 2026-11-27).
+- `learn/`: one plain spec per Part 1 lesson (no page objects or helpers, each file signs in
+  itself); read-only tests use alice. The framework part (page objects, fixtures, journeys,
+  a fresh customer per state-changing test) comes next. Never use `/test/bugs`.
+- Always wait for `/wallet` after signing in before `page.goto` elsewhere (the login cookie is
+  set by the response). Next.js adds a hidden `role="alert"` route announcer, so do not use a
+  bare `getByRole('alert')`.
+- Run: `cd tests/ui && npm install && npx playwright install chromium && npx playwright test`
+  (22 passed). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.

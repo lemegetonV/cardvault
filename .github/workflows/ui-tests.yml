@@ -1,0 +1,61 @@
+name: ui-tests
+
+# Runs the Playwright suite (tests/ui) against a full CardVault stack started in the runner.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ui-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ui-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v5
+
+      - name: Start CardVault
+        uses: ./.github/actions/start-stack
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install the test tools
+        working-directory: tests/ui
+        run: npm ci
+
+      - name: Install the browser
+        working-directory: tests/ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Check the TypeScript
+        working-directory: tests/ui
+        run: npm run typecheck
+
+      - name: Run the tests
+        working-directory: tests/ui
+        run: npx playwright test
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ui-test-report
+          path: |
+            tests/ui/playwright-report/
+            tests/ui/test-results/
+          retention-days: 14
+
+      - name: Stop CardVault
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
