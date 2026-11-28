@@ -127,7 +127,9 @@ then `docker compose up -d --no-build --wait`.
   Part 2, the framework: `pages/` (one class per page, readonly locators, actions; no
   assertions inside), `api/CardVaultApi.ts` (set-up: customers, purchases), `fixtures.ts`
   (`test.extend`: page objects, `api`, `customer` = new customer + purchase, signed in),
-  `data/test-data.ts`, tests in `tests/` (project `framework`). Journeys come next.
+  `data/test-data.ts`, `components/` (Toast, ConsentDialog, Menu), tests in `tests/`
+  (project `framework`; journeys tagged `@phone` also run in project `phone`, Pixel 7).
+  After removing a card from the wallet it shows REMOVED and is not eligible again.
   Screenshot tests live in `visual/` with `visual.config.ts` and run only inside the
   Playwright Docker image (`npm run visual`), because baselines differ between machines.
   Never use `/test/bugs`.
@@ -135,5 +137,5 @@ then `docker compose up -d --no-build --wait`.
   set by the response). Next.js adds a hidden `role="alert"` route announcer, so do not use a
   bare `getByRole('alert')`.
 - Run: `cd tests/ui && npm install && npx playwright install chromium && npx playwright test`
-  (74 passed: 73 tests plus the `setup` project, which saves alice's login to `.auth/`),
+  (80 passed: 79 tests plus the `setup` project, which saves alice's login to `.auth/`),
   then `npm run visual` (2 passed). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.
