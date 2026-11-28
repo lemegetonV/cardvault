@@ -147,3 +147,4 @@ Test workflows reuse the same composite action:
 - `ARCHITECTURE.md`: design decisions and tradeoffs
 - `docs/errors.md`: every error code
 - `docs/events/`: JSON Schemas for every event
+- `docs/STAGING.md`: the stage server: addresses, set-up, secrets (where they live) and upkeep
