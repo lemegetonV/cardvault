@@ -118,12 +118,16 @@ then `docker compose up -d --no-build --wait`.
 - Playwright Test + TypeScript (pinned in `package.json`), same beginner rules as the API suite.
   It backs the Playwright track on the learning site (plan approved by the owner 2026-11-27).
 - `learn/`: one plain spec per Part 1 lesson (no page objects or helpers, each file signs in
-  itself); read-only tests use alice. `forms.spec.ts` changes data, so it uses
-  `learn/helpers/new-customer.ts` (test customer + one purchase, waits until it is listed).
+  itself, except `saved-login.spec.ts`); read-only tests use alice. Tests that change data
+  (forms, frames, closing a card) use `learn/helpers/new-customer.ts` (a test customer with one
+  purchase, or with one card not yet in the wallet). Wrong-password tests use a new made-up
+  username each run (usernames lock after a few failures). Wait for alice's 4 wallet cards
+  before clicking Menu (the button ignores clicks until the page has hydrated), and for
+  `/api/auth/session` before moving `page.clock`.
   The framework part (page objects, fixtures, journeys,
   a fresh customer per state-changing test) comes next. Never use `/test/bugs`.
 - Always wait for `/wallet` after signing in before `page.goto` elsewhere (the login cookie is
   set by the response). Next.js adds a hidden `role="alert"` route announcer, so do not use a
   bare `getByRole('alert')`.
 - Run: `cd tests/ui && npm install && npx playwright install chromium && npx playwright test`
-  (25 passed). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.
+  (61 passed: 60 tests plus the `setup` project, which saves alice's login to `.auth/`). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.
