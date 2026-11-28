@@ -124,10 +124,16 @@ then `docker compose up -d --no-build --wait`.
   username each run (usernames lock after a few failures). Wait for alice's 4 wallet cards
   before clicking Menu (the button ignores clicks until the page has hydrated), and for
   `/api/auth/session` before moving `page.clock`.
-  The framework part (page objects, fixtures, journeys,
-  a fresh customer per state-changing test) comes next. Never use `/test/bugs`.
+  Part 2, the framework: `pages/` (one class per page, readonly locators, actions; no
+  assertions inside), `api/CardVaultApi.ts` (set-up: customers, purchases), `fixtures.ts`
+  (`test.extend`: page objects, `api`, `customer` = new customer + purchase, signed in),
+  `data/test-data.ts`, tests in `tests/` (project `framework`). Journeys come next.
+  Screenshot tests live in `visual/` with `visual.config.ts` and run only inside the
+  Playwright Docker image (`npm run visual`), because baselines differ between machines.
+  Never use `/test/bugs`.
 - Always wait for `/wallet` after signing in before `page.goto` elsewhere (the login cookie is
   set by the response). Next.js adds a hidden `role="alert"` route announcer, so do not use a
   bare `getByRole('alert')`.
 - Run: `cd tests/ui && npm install && npx playwright install chromium && npx playwright test`
-  (61 passed: 60 tests plus the `setup` project, which saves alice's login to `.auth/`). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.
+  (74 passed: 73 tests plus the `setup` project, which saves alice's login to `.auth/`),
+  then `npm run visual` (2 passed). `npm run typecheck`. CI: `.github/workflows/ui-tests.yml`.
